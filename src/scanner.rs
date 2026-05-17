@@ -157,14 +157,25 @@ pub fn scan_directory(path: &Path, config: &Config) -> Result<ScanResult> {
         std::env::current_dir()?.join(path)
     };
 
-    // Walk the directory tree
+    // Check that the scan root exists
+    if !walk_root.exists() {
+        result
+            .errors
+            .push(format!("Scan root does not exist: {}", walk_root.display()));
+        result.scan_duration_ms = start.elapsed().as_millis() as u64;
+        return Ok(result);
+    }
+
+    // Walk the directory tree (no symlink following to avoid loops)
     for entry in WalkDir::new(&walk_root)
         .max_depth(config.max_depth)
+        .follow_links(false)
         .into_iter()
         .filter_entry(|e| !should_ignore(e, config))
     {
         match entry {
             Ok(entry) => {
+                // Skip entries we can't read metadata for
                 if entry.file_type().is_dir() && entry.depth() > 0 {
                     // Check if this directory might be a project root
                     if is_project_root(entry.path()) {
@@ -178,7 +189,10 @@ pub fn scan_directory(path: &Path, config: &Config) -> Result<ScanResult> {
                 }
             }
             Err(e) => {
-                result.errors.push(format!("Walk error: {}", e));
+                // Log but don't fail on permission errors, broken symlinks, etc.
+                result
+                    .errors
+                    .push(format!("Skipping {}: {}", e.path().unwrap_or(walk_root.as_path()).display(), e));
             }
         }
     }
@@ -361,18 +375,35 @@ fn calculate_dir_stats(dir: &Path, config: &Config) -> (u64, u64) {
     let mut total_size: u64 = 0;
     let mut file_count: u64 = 0;
 
+    let mut walk_errors = 0u64;
     for entry in WalkDir::new(dir)
         .max_depth(6)
+        .follow_links(false)
         .into_iter()
         .filter_entry(|e| !should_ignore(e, config))
-        .flatten()
     {
-        if entry.file_type().is_file() {
-            if let Ok(metadata) = entry.metadata() {
-                total_size += metadata.len();
-                file_count += 1;
+        match entry {
+            Ok(entry) => {
+                if entry.file_type().is_file() {
+                    if let Ok(metadata) = entry.metadata() {
+                        total_size += metadata.len();
+                        file_count += 1;
+                    }
+                }
+            }
+            Err(_) => {
+                walk_errors += 1;
             }
         }
+    }
+
+    // Log if we hit permission errors or broken symlinks
+    if walk_errors > 0 {
+        eprintln!(
+            "Warning: {} entries unreadable in {} (permission denied or broken symlink)",
+            walk_errors,
+            dir.display()
+        );
     }
 
     (total_size, file_count)
@@ -384,21 +415,28 @@ fn get_last_modified(dir: &Path) -> Option<DateTime<Utc>> {
 
     for entry in WalkDir::new(dir)
         .max_depth(3)
+        .follow_links(false)
         .into_iter()
         .filter_entry(|e| {
             let name = e.file_name().to_string_lossy();
             name != ".git" && name != "node_modules" && name != "target"
         })
-        .flatten()
     {
-        if entry.file_type().is_file() || entry.file_type().is_dir() {
-            if let Ok(metadata) = entry.metadata() {
-                if let Ok(mtime) = metadata.modified() {
-                    let datetime: DateTime<Utc> = mtime.into();
-                    if latest.is_none_or(|l| datetime > l) {
-                        latest = Some(datetime);
+        match entry {
+            Ok(entry) => {
+                if entry.file_type().is_file() || entry.file_type().is_dir() {
+                    if let Ok(metadata) = entry.metadata() {
+                        if let Ok(mtime) = metadata.modified() {
+                            let datetime: DateTime<Utc> = mtime.into();
+                            if latest.is_none_or(|l| datetime > l) {
+                                latest = Some(datetime);
+                            }
+                        }
                     }
                 }
+            }
+            Err(_) => {
+                // Silently skip unreadable entries
             }
         }
     }

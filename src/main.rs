@@ -112,16 +112,19 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    // Build ScanRoots from resolved paths
+    let roots: Vec<panoptic::roots::ScanRoot> = scan_paths
+        .iter()
+        .map(|p| panoptic::roots::ScanRoot::new(p.clone()))
+        .collect();
+
     if cli.web {
         // Web mode — supports multiple roots
         panoptic::web::start(scan_paths, config).await?;
     } else {
-        // TUI mode — use first path (or current dir)
-        let scan_path = scan_paths.into_iter().next().unwrap_or_else(|| {
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-        });
+        // TUI mode — supports multiple roots
         let mut app = panoptic::tui::TuiApp::new(config);
-        app.run(scan_path)?;
+        app.run(roots)?;
     }
 
     Ok(())

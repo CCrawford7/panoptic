@@ -1,6 +1,7 @@
 use crate::config::Config;
 use crate::project::{ActivityLevel, Project, ProjectType};
-use crate::scanner::{scan_directory, ScanResult};
+use crate::roots::ScanRoot;
+use crate::scanner::{scan_all_roots, ScanResult};
 use anyhow::Result;
 use chrono::Utc;
 use ratatui::{
@@ -16,7 +17,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use std::{io, path::PathBuf, time::Duration, time::Instant};
+use std::{io, time::Duration, time::Instant};
 
 /// Filter modes for the project list
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,6 +62,7 @@ pub struct TuiApp {
     pub search: String,
     mode: AppMode,
     pub config: Config,
+    pub roots: Vec<ScanRoot>,
     pub scan_result: Option<ScanResult>,
     pub show_help: bool,
     pub scroll_offset: u16,
@@ -77,6 +79,7 @@ impl TuiApp {
             search: String::new(),
             mode: AppMode::Overview,
             config,
+            roots: Vec::new(),
             scan_result: None,
             show_help: false,
             scroll_offset: 0,
@@ -84,7 +87,9 @@ impl TuiApp {
         }
     }
 
-    pub fn run(&mut self, scan_path: PathBuf) -> Result<()> {
+    pub fn run(&mut self, roots: Vec<ScanRoot>) -> Result<()> {
+        self.roots = roots;
+
         // Setup terminal
         enable_raw_mode()?;
         let mut stdout = io::stdout();
@@ -94,7 +99,7 @@ impl TuiApp {
         terminal.clear()?;
 
         // Scan projects
-        let mut scan_result = scan_directory(&scan_path, &self.config)?;
+        let mut scan_result = scan_all_roots(&self.roots, &self.config)?;
         let duration_ms = scan_result.scan_duration_ms;
         self.projects = std::mem::take(&mut scan_result.projects);
         self.scan_result = Some(scan_result);
@@ -128,7 +133,7 @@ impl TuiApp {
                             Action::Continue => {}
                             Action::Quit => break Ok(()),
                             Action::Refresh => {
-                                let mut scan_result = scan_directory(&scan_path, &self.config)?;
+                                let mut scan_result = scan_all_roots(&self.roots, &self.config)?;
                                 let duration = scan_result.scan_duration_ms;
                                 self.projects = std::mem::take(&mut scan_result.projects);
                                 self.scan_result = Some(scan_result);
@@ -392,10 +397,20 @@ impl TuiApp {
             .filter(|p| p.git.as_ref().map(|g| g.is_dirty).unwrap_or(false))
             .count();
 
+        let root_label = if self.roots.len() == 1 {
+            self.roots[0].label_or_path()
+        } else {
+            format!("{} roots", self.roots.len())
+        };
+
         let mut title_spans = vec![
             Span::styled("◉ ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
             Span::styled("panoptic", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
             Span::raw(format!("  —  {} projects", self.projects.len())),
+            Span::styled(
+                format!("  📁 {} ", root_label),
+                Style::default().fg(Color::DarkGray),
+            ),
         ];
 
         if dirty_count > 0 {
