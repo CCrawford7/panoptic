@@ -5,10 +5,11 @@ edition = "2021"
 description = "The all-seeing project dashboard for your development folders"
 authors = ["panoptic devs"]
 license = "MIT"
-repository = "https://github.com/panoptic-dev/panoptic"
-homepage = "https://github.com/panoptic-dev/panoptic"
-keywords = ["project-management", "dashboard", "tui", "developer-tools"]
-categories = ["command-line-utilities", "development-tools"]
+repository = "https://github.com/CCrawford7/panoptic"
+homepage = "https://github.com/CCrawford7/panoptic"
+keywords = ["project-management", "dashboard", "tui", "developer-tools", "git", "monorepo"]
+categories = ["command-line-utilities", "development-tools", "git"]
+readme = "README.md"
 
 [dependencies]
 # CLI

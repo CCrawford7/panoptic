@@ -179,3 +179,121 @@ impl Project {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_project_type_labels() {
+        assert_eq!(ProjectType::Rust.label(), "Rust");
+        assert_eq!(ProjectType::TypeScript.label(), "TypeScript");
+        assert_eq!(ProjectType::Python.label(), "Python");
+        assert_eq!(ProjectType::Godot.label(), "Godot");
+        assert_eq!(ProjectType::ChromeExtension.label(), "Chrome Ext");
+        assert_eq!(ProjectType::Unknown.label(), "Unknown");
+    }
+
+    #[test]
+    fn test_activity_level_labels() {
+        assert_eq!(ActivityLevel::Active.label(), "Active");
+        assert_eq!(ActivityLevel::Stable.label(), "Stable");
+        assert_eq!(ActivityLevel::Stale.label(), "Stale");
+        assert_eq!(ActivityLevel::Done.label(), "Done");
+        assert_eq!(ActivityLevel::Archived.label(), "Archived");
+    }
+
+    #[test]
+    fn test_activity_from_days() {
+        assert_eq!(Project::activity_from_days(0), ActivityLevel::Active);
+        assert_eq!(Project::activity_from_days(15), ActivityLevel::Active);
+        assert_eq!(Project::activity_from_days(30), ActivityLevel::Active);
+        assert_eq!(Project::activity_from_days(31), ActivityLevel::Stable);
+        assert_eq!(Project::activity_from_days(60), ActivityLevel::Stable);
+        assert_eq!(Project::activity_from_days(90), ActivityLevel::Stable);
+        assert_eq!(Project::activity_from_days(91), ActivityLevel::Stale);
+        assert_eq!(Project::activity_from_days(365), ActivityLevel::Stale);
+    }
+
+    #[test]
+    fn test_activity_ordering() {
+        // Active should come first (sort uses reverse order)
+        assert!(ActivityLevel::Active < ActivityLevel::Stable);
+        assert!(ActivityLevel::Stable < ActivityLevel::Stale);
+        assert!(ActivityLevel::Stale < ActivityLevel::Done);
+        assert!(ActivityLevel::Done < ActivityLevel::Archived);
+    }
+
+    #[test]
+    fn test_size_human() {
+        let make_project = |size: u64| Project {
+            name: "test".into(),
+            path: PathBuf::from("/tmp/test"),
+            project_type: ProjectType::Generic,
+            size,
+            file_count: 0,
+            last_modified: Utc::now(),
+            created: None,
+            is_git_repo: false,
+            git: None,
+            agent: None,
+            tags: vec![],
+            activity: ActivityLevel::Active,
+        };
+
+        assert_eq!(make_project(500).size_human(), "500B");
+        assert_eq!(make_project(1024).size_human(), "1K");
+        assert_eq!(make_project(1536).size_human(), "2K");
+        assert_eq!(make_project(1_048_576).size_human(), "1.0M");
+        assert_eq!(make_project(1_073_741_824).size_human(), "1.0G");
+    }
+
+    #[test]
+    fn test_file_count_human() {
+        let make_project = |file_count: u64| Project {
+            name: "test".into(),
+            path: PathBuf::from("/tmp/test"),
+            project_type: ProjectType::Generic,
+            size: 0,
+            file_count,
+            last_modified: Utc::now(),
+            created: None,
+            is_git_repo: false,
+            git: None,
+            agent: None,
+            tags: vec![],
+            activity: ActivityLevel::Active,
+        };
+
+        assert_eq!(make_project(42).file_count_human(), "42");
+        assert_eq!(make_project(999).file_count_human(), "999");
+        assert_eq!(make_project(1000).file_count_human(), "1.0k");
+        assert_eq!(make_project(1500).file_count_human(), "1.5k");
+        assert_eq!(make_project(12345).file_count_human(), "12.3k");
+    }
+
+    #[test]
+    fn test_git_health_labels() {
+        let make_state = |is_dirty: bool, ahead: u32, behind: u32| GitState {
+            branch: "main".into(),
+            is_dirty,
+            staged: 0,
+            unstaged: 0,
+            untracked: 0,
+            ahead,
+            behind,
+            last_commit_time: None,
+            last_commit_message: None,
+            last_commit_author: None,
+            total_commits: 5,
+            stash_count: 0,
+            has_remote: true,
+        };
+
+        assert_eq!(make_state(false, 0, 0).health_label(), "clean");
+        assert_eq!(make_state(true, 0, 0).health_label(), "dirty");
+        assert_eq!(make_state(false, 3, 0).health_label(), "diverged");
+        assert_eq!(make_state(false, 0, 2).health_label(), "diverged");
+        assert_eq!(make_state(true, 3, 1).health_label(), "dirty"); // dirty takes priority
+    }
+}

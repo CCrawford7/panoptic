@@ -168,7 +168,7 @@ pub fn scan_directory(path: &Path, config: &Config) -> Result<ScanResult> {
                     // Check if this directory might be a project root
                     if is_project_root(entry.path()) {
                         // Make sure it's not the root we're scanning
-                        if entry.path() != &walk_root {
+                        if entry.path() != walk_root {
                             candidates.push(entry.path().to_path_buf());
                             // Don't descend into project subdirectories
                             continue;
@@ -186,7 +186,7 @@ pub fn scan_directory(path: &Path, config: &Config) -> Result<ScanResult> {
     if is_project_root(&walk_root) || !candidates.is_empty() {
         // Root itself might be a project if it has indicators
         let root_has_indicators = walk_root.join(".git").exists()
-            || candidates.iter().any(|c| c.parent().map_or(false, |p| p == &walk_root));
+            || candidates.iter().any(|c| c.parent().is_some_and(|p| p == walk_root));
 
         if !root_has_indicators {
             // Check if any of the top-level dirs are projects
@@ -263,7 +263,7 @@ fn scan_single_project(project_path: &Path, config: &Config) -> Result<Option<Pr
     let (size, file_count) = calculate_dir_stats(project_path, config);
 
     // Get last modified time
-    let last_modified = get_last_modified(project_path).unwrap_or_else(|| Utc::now());
+    let last_modified = get_last_modified(project_path).unwrap_or(Utc::now());
 
     // Get creation time from .git if available
     let created = get_git_creation_time(project_path);
@@ -315,13 +315,12 @@ fn calculate_dir_stats(dir: &Path, config: &Config) -> (u64, u64) {
         .max_depth(6)
         .into_iter()
         .filter_entry(|e| !should_ignore(e, config))
+        .flatten()
     {
-        if let Ok(entry) = entry {
-            if entry.file_type().is_file() {
-                if let Ok(metadata) = entry.metadata() {
-                    total_size += metadata.len();
-                    file_count += 1;
-                }
+        if entry.file_type().is_file() {
+            if let Ok(metadata) = entry.metadata() {
+                total_size += metadata.len();
+                file_count += 1;
             }
         }
     }
@@ -340,15 +339,14 @@ fn get_last_modified(dir: &Path) -> Option<DateTime<Utc>> {
             let name = e.file_name().to_string_lossy();
             name != ".git" && name != "node_modules" && name != "target"
         })
+        .flatten()
     {
-        if let Ok(entry) = entry {
-            if entry.file_type().is_file() || entry.file_type().is_dir() {
-                if let Ok(metadata) = entry.metadata() {
-                    if let Ok(mtime) = metadata.modified() {
-                        let datetime: DateTime<Utc> = mtime.into();
-                        if latest.map_or(true, |l| datetime > l) {
-                            latest = Some(datetime);
-                        }
+        if entry.file_type().is_file() || entry.file_type().is_dir() {
+            if let Ok(metadata) = entry.metadata() {
+                if let Ok(mtime) = metadata.modified() {
+                    let datetime: DateTime<Utc> = mtime.into();
+                    if latest.is_none_or(|l| datetime > l) {
+                        latest = Some(datetime);
                     }
                 }
             }
@@ -372,7 +370,7 @@ fn get_git_creation_time(dir: &Path) -> Option<DateTime<Utc>> {
             let time = commit.time();
             let timestamp = time.seconds();
             if let Some(dt) = DateTime::from_timestamp(timestamp, 0) {
-                if oldest.map_or(true, |o| dt < o) {
+                if oldest.is_none_or(|o| dt < o) {
                     oldest = Some(dt);
                 }
             }
@@ -380,4 +378,217 @@ fn get_git_creation_time(dir: &Path) -> Option<DateTime<Utc>> {
     }
 
     oldest
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::project::ActivityLevel;
+    use std::fs;
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("panoptic-scanner-test-{}", name));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn test_detect_project_type_rust() {
+        let dir = temp_dir("rust");
+        fs::write(dir.join("Cargo.toml"), "[package]\nname = \"test\"\n").unwrap();
+        assert_eq!(detect_project_type(&dir), ProjectType::Rust);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_detect_project_type_typescript() {
+        let dir = temp_dir("ts");
+        fs::write(dir.join("package.json"), "{}").unwrap();
+        fs::write(dir.join("tsconfig.json"), "{}").unwrap();
+        assert_eq!(detect_project_type(&dir), ProjectType::TypeScript);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_detect_project_type_javascript() {
+        let dir = temp_dir("js");
+        fs::write(dir.join("package.json"), "{}").unwrap();
+        assert_eq!(detect_project_type(&dir), ProjectType::JavaScript);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_detect_project_type_python() {
+        let dir = temp_dir("py");
+        fs::write(dir.join("pyproject.toml"), "[project]\n").unwrap();
+        assert_eq!(detect_project_type(&dir), ProjectType::Python);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_detect_project_type_go() {
+        let dir = temp_dir("go");
+        fs::write(dir.join("go.mod"), "module test\n").unwrap();
+        assert_eq!(detect_project_type(&dir), ProjectType::Go);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_detect_project_type_docker() {
+        let dir = temp_dir("docker");
+        fs::write(dir.join("Dockerfile"), "FROM ubuntu\n").unwrap();
+        assert_eq!(detect_project_type(&dir), ProjectType::Docker);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_detect_project_type_chrome_extension() {
+        let dir = temp_dir("chrome");
+        fs::write(
+            dir.join("manifest.json"),
+            r#"{"background": {"scripts": ["bg.js"]}}"#,
+        )
+        .unwrap();
+        assert_eq!(detect_project_type(&dir), ProjectType::ChromeExtension);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_detect_project_type_generic_git() {
+        let dir = temp_dir("generic");
+        fs::create_dir(dir.join(".git")).unwrap();
+        assert_eq!(detect_project_type(&dir), ProjectType::Generic);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_detect_project_type_nix() {
+        let dir = temp_dir("nix");
+        fs::write(dir.join("flake.nix"), "{}").unwrap();
+        assert_eq!(detect_project_type(&dir), ProjectType::Nix);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_detect_project_type_unknown() {
+        let dir = temp_dir("unknown");
+        fs::write(dir.join("random.txt"), "data").unwrap();
+        assert_eq!(detect_project_type(&dir), ProjectType::Unknown);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_is_project_root_with_git() {
+        let dir = temp_dir("root-git");
+        fs::create_dir(dir.join(".git")).unwrap();
+        assert!(is_project_root(&dir));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_is_project_root_with_indicator() {
+        let dir = temp_dir("root-indicator");
+        fs::write(dir.join("Makefile"), "all:\n").unwrap();
+        assert!(is_project_root(&dir));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_is_project_root_not_root() {
+        let dir = temp_dir("not-root");
+        assert!(!is_project_root(&dir));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_should_ignore_hidden_files() {
+        let config = Config::default();
+        let dir = temp_dir("ignore-hidden");
+        fs::create_dir(dir.join(".hidden")).unwrap();
+
+        let entry = WalkDir::new(&dir).into_iter().filter_entry(|e| !should_ignore(e, &config)).collect::<Vec<_>>();
+        let hidden_found = entry.iter().any(|e| {
+            e.as_ref().ok().map(|e| e.file_name().to_string_lossy().starts_with('.')).unwrap_or(false)
+        });
+        // The hidden dir should be filtered out
+        assert!(!hidden_found, "hidden dir should be filtered out");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_show_hidden_config() {
+        let mut config = Config::default();
+        config.show_hidden = true;
+        let dir = temp_dir("show-hidden");
+        fs::create_dir(dir.join(".visible")).unwrap();
+
+        let entries: Vec<_> = WalkDir::new(&dir)
+            .into_iter()
+            .filter_entry(|e| !should_ignore(e, &config))
+            .collect();
+        let hidden_found = entries.iter().any(|e| {
+            e.as_ref().ok().map(|e| e.file_name().to_string_lossy() == ".visible").unwrap_or(false)
+        });
+        assert!(hidden_found, "hidden dir should be visible when show_hidden is true");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_scan_directory_no_projects() {
+        let dir = temp_dir("empty-scan");
+        let config = Config::default();
+        let result = scan_directory(&dir, &config).unwrap();
+        assert_eq!(result.projects.len(), 0);
+        assert!(result.errors.is_empty());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_scan_directory_finds_projects() {
+        let dir = temp_dir("multi-scan");
+
+        // Create two project directories
+        fs::create_dir(dir.join("proj-a")).unwrap();
+        fs::write(dir.join("proj-a/Cargo.toml"), "[package]\nname = \"a\"\n").unwrap();
+
+        fs::create_dir(dir.join("proj-b")).unwrap();
+        fs::write(dir.join("proj-b/package.json"), "{}").unwrap();
+
+        let config = Config::default();
+        let result = scan_directory(&dir, &config).unwrap();
+
+        assert_eq!(result.projects.len(), 2);
+        let names: Vec<&str> = result.projects.iter().map(|p| p.name.as_str()).collect();
+        assert!(names.contains(&"proj-a"));
+        assert!(names.contains(&"proj-b"));
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_scan_directory_skips_ignored() {
+        let dir = temp_dir("ignored-scan");
+
+        fs::create_dir(dir.join("node_modules")).unwrap();
+        fs::write(dir.join("node_modules/package.json"), "{}").unwrap();
+
+        let config = Config::default();
+        let result = scan_directory(&dir, &config).unwrap();
+        assert_eq!(result.projects.len(), 0);
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_activity_level_from_modification() {
+        // Verify activity classification boundaries
+        assert_eq!(Project::activity_from_days(0), ActivityLevel::Active);
+        assert_eq!(Project::activity_from_days(29), ActivityLevel::Active);
+        assert_eq!(Project::activity_from_days(30), ActivityLevel::Active);
+        assert_eq!(Project::activity_from_days(31), ActivityLevel::Stable);
+        assert_eq!(Project::activity_from_days(89), ActivityLevel::Stable);
+        assert_eq!(Project::activity_from_days(90), ActivityLevel::Stable);
+        assert_eq!(Project::activity_from_days(91), ActivityLevel::Stale);
+    }
 }

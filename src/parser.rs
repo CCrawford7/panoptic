@@ -137,6 +137,191 @@ fn truncate_description(s: &str) -> String {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_readme_description_simple() {
+        let content = "# My Project\n\nThis is a cool project that does things.\n\nMore details here.";
+        let desc = extract_readme_description(content);
+        assert_eq!(desc, Some("This is a cool project that does things.".to_string()));
+    }
+
+    #[test]
+    fn test_extract_readme_description_with_badges() {
+        let content = "# My Project\n\n[![CI](https://img.shields.io/badge/ci-passing.svg)](https://example.com)\n\nThis is the real description after badges.\n\nMore stuff.";
+        let desc = extract_readme_description(content);
+        assert_eq!(desc, Some("This is the real description after badges.".to_string()));
+    }
+
+    #[test]
+    fn test_extract_readme_description_fallback() {
+        let content = "Just a simple file\n\nWith some description here.\n\nNo H1 heading.";
+        let desc = extract_readme_description(content);
+        assert_eq!(desc, Some("With some description here.".to_string()));
+    }
+
+    #[test]
+    fn test_extract_readme_description_too_short() {
+        let content = "# Project\n\nShort.";
+        let desc = extract_readme_description(content);
+        assert!(desc.is_none() || desc.unwrap().len() <= 20);
+    }
+
+    #[test]
+    fn test_truncate_description() {
+        let short = "Hello, world!";
+        assert_eq!(truncate_description(short), short);
+
+        let long = "x".repeat(250);
+        let truncated = truncate_description(&long);
+        assert_eq!(truncated.len(), 200);
+        assert!(truncated.ends_with("..."));
+    }
+
+    #[test]
+    fn test_extract_first_paragraph() {
+        let content = "# Heading\n\nThis is the first real paragraph with enough text.\n\nAnother para.";
+        let result = extract_first_paragraph(content);
+        assert_eq!(result, Some("This is the first real paragraph with enough text.".to_string()));
+    }
+
+    #[test]
+    fn test_parse_agent_content_checklist() {
+        let content = "# Project Plan\n\n## Tasks\n- [ ] do something\n- [x] done task\n- [ ] another todo\n";
+        let mut context = AgentContext::default();
+        parse_agent_content(content, &mut context);
+
+        assert_eq!(context.checklist_total, 3);
+        assert_eq!(context.checklist_done, 1);
+        assert_eq!(context.next_steps.len(), 2);
+        assert_eq!(context.completed_items.len(), 1);
+        assert!(context.next_steps.contains(&"do something".to_string()));
+        assert!(context.completed_items.contains(&"done task".to_string()));
+    }
+
+    #[test]
+    fn test_parse_agent_content_phase() {
+        let content = "## Phase\n\nInitial Development\n\n## Task\n\nBuild the core module";
+        let mut context = AgentContext::default();
+        parse_agent_content(content, &mut context);
+
+        assert_eq!(context.current_phase, Some("Initial Development".to_string()));
+        assert_eq!(context.current_task, Some("Build the core module".to_string()));
+    }
+
+    #[test]
+    fn test_parse_agent_content_blockers() {
+        let content = "## Blocker: Waiting for API key\n\nSome other text\n\nblocked: dependency not released";
+        let mut context = AgentContext::default();
+        parse_agent_content(content, &mut context);
+
+        assert!(!context.blockers.is_empty());
+        assert!(context.blockers.iter().any(|b| b.contains("API key") || b.contains("dependency")));
+    }
+
+    #[test]
+    fn test_parse_agent_content_next_steps_section() {
+        let content = "# Plan\n\n## Next Steps\n- Step one\n- Step two\n- Step three\n\n## Other";
+        let mut context = AgentContext::default();
+        parse_agent_content(content, &mut context);
+
+        assert!(context.next_steps.contains(&"Step one".to_string()));
+        assert!(context.next_steps.contains(&"Step two".to_string()));
+        assert!(context.next_steps.contains(&"Step three".to_string()));
+    }
+
+    #[test]
+    fn test_parse_agent_content_decisions() {
+        let content = "# Log\n\nDecision: Use Rust for backend\nChose: Axum over Actix";
+        let mut context = AgentContext::default();
+        parse_agent_content(content, &mut context);
+
+        assert!(!context.recent_decisions.is_empty());
+        assert!(context.recent_decisions.iter().any(|d| d.contains("Rust")));
+    }
+
+    #[test]
+    fn test_extract_checklist_item() {
+        assert_eq!(
+            extract_checklist_item("- [ ] do the thing"),
+            Some("do the thing".to_string())
+        );
+        assert_eq!(
+            extract_checklist_item("- [x] completed item"),
+            Some("completed item".to_string())
+        );
+        assert_eq!(
+            extract_checklist_item("- [X] another done"),
+            Some("another done".to_string())
+        );
+        assert_eq!(
+            extract_checklist_item("* [ ] star bullet"),
+            Some("star bullet".to_string())
+        );
+        assert_eq!(extract_checklist_item("not a checklist"), None);
+    }
+
+    #[test]
+    fn test_parse_agent_files_empty_dir() {
+        // Create a temp dir with no files
+        let dir = std::env::temp_dir().join("panoptic-test-empty");
+        let _ = std::fs::create_dir_all(&dir);
+        let result = parse_agent_files(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_agent_files_with_readme() {
+        let dir = std::env::temp_dir().join("panoptic-test-readme");
+        let _ = std::fs::create_dir_all(&dir);
+        std::fs::write(dir.join("README.md"), "# Test Project\n\nA description for testing.\n").unwrap();
+
+        let result = parse_agent_files(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().description, Some("A description for testing.".to_string()));
+    }
+
+    #[test]
+    fn test_parse_agent_files_with_brief() {
+        let dir = std::env::temp_dir().join("panoptic-test-brief");
+        let _ = std::fs::create_dir_all(&dir);
+        std::fs::write(dir.join("brief.md"), "A brief description of the project.\n\nMore details.").unwrap();
+
+        let result = parse_agent_files(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().description, Some("A brief description of the project.".to_string()));
+    }
+
+    #[test]
+    fn test_parse_agent_files_full_context() {
+        let dir = std::env::temp_dir().join("panoptic-test-full");
+        let _ = std::fs::create_dir_all(&dir);
+
+        std::fs::write(dir.join("README.md"), "# Full Project\n\nA full featured project.\n").unwrap();
+        std::fs::write(dir.join("CLAUDE.md"), "# CLAUDE\n\n## Phase\n\nBeta\n\n## Tasks\n- [x] setup\n- [ ] build feature\n- [ ] ship it\n\n## Next Steps\n- launch\n\nBlocker: need review\n\nDecision: use SQLite\n").unwrap();
+
+        let result = parse_agent_files(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert!(result.is_some());
+        let ctx = result.unwrap();
+        assert_eq!(ctx.description, Some("A full featured project.".to_string()));
+        assert_eq!(ctx.current_phase, Some("Beta".to_string()));
+        assert_eq!(ctx.checklist_total, 3);
+        assert_eq!(ctx.checklist_done, 1);
+        assert!(ctx.next_steps.contains(&"build feature".to_string()));
+        assert!(ctx.blockers.iter().any(|b| b.contains("review")));
+        assert!(!ctx.recent_decisions.is_empty());
+    }
+}
+
 /// Parse a single agent file for structured content
 fn parse_agent_content(content: &str, context: &mut AgentContext) {
     let lines: Vec<&str> = content.lines().collect();
@@ -149,20 +334,28 @@ fn parse_agent_content(content: &str, context: &mut AgentContext) {
         if line.starts_with('#') {
             let lower = line.to_lowercase();
             if lower.contains("phase") {
-                // Get the next non-empty line as the phase description
-                if let Some(next) = lines.get(i + 1) {
-                    let next = next.trim();
-                    if !next.is_empty() && !next.starts_with('#') {
+                // Skip blank lines to find the phase description
+                for j in i + 1..lines.len() {
+                    let next = lines[j].trim();
+                    if next.is_empty() {
+                        continue;
+                    }
+                    if !next.starts_with('#') {
                         context.current_phase = Some(next.to_string());
                     }
+                    break;
                 }
             }
             if lower.contains("task") || lower.contains("objective") || lower.contains("goal") {
-                if let Some(next) = lines.get(i + 1) {
-                    let next = next.trim();
-                    if !next.is_empty() && !next.starts_with('#') {
+                for j in i + 1..lines.len() {
+                    let next = lines[j].trim();
+                    if next.is_empty() {
+                        continue;
+                    }
+                    if !next.starts_with('#') {
                         context.current_task = Some(next.to_string());
                     }
+                    break;
                 }
             }
         }
@@ -188,7 +381,7 @@ fn parse_agent_content(content: &str, context: &mut AgentContext) {
             && !line.contains('#')
             && line.len() > 3
         {
-            let after_dot = line.splitn(2, '.').nth(1).unwrap_or("").trim();
+            let after_dot = line.split_once('.').map(|x| x.1).unwrap_or("").trim();
             if !after_dot.is_empty()
                 && after_dot.len() > 5
                 && !after_dot.starts_with(' ')
@@ -209,15 +402,22 @@ fn parse_agent_content(content: &str, context: &mut AgentContext) {
             || line.to_lowercase().contains("blocking")
         {
             // Check if there's content after the colon
-            if let Some(after_colon) = line.splitn(2, ':').nth(1) {
+            if let Some(after_colon) = line.split_once(':').map(|x| x.1) {
                 let text = after_colon.trim();
                 if !text.is_empty() {
                     context.blockers.push(text.to_string());
                 }
-            } else if let Some(next) = lines.get(i + 1) {
-                let next = next.trim();
-                if !next.is_empty() && !next.starts_with('#') {
-                    context.blockers.push(next.to_string());
+            } else {
+                // No colon content, check next non-blank line
+                for j in i + 1..lines.len() {
+                    let next = lines[j].trim();
+                    if next.is_empty() {
+                        continue;
+                    }
+                    if !next.starts_with('#') {
+                        context.blockers.push(next.to_string());
+                    }
+                    break;
                 }
             }
         }
@@ -256,7 +456,7 @@ fn parse_agent_content(content: &str, context: &mut AgentContext) {
             || lower_line.contains("chose")
             || lower_line.contains("decided")
         {
-            if let Some(after_colon) = line.splitn(2, ':').nth(1) {
+            if let Some(after_colon) = line.split_once(':').map(|x| x.1) {
                 let text = after_colon.trim();
                 if !text.is_empty() {
                     context.recent_decisions.push(text.to_string());
@@ -281,14 +481,14 @@ fn extract_checklist_item(line: &str) -> Option<String> {
     let line = line.trim();
     // Remove the bullet and checkbox marker
     if let Some(rest) = line.strip_prefix("- [") {
-        let after = rest.splitn(2, ']').nth(1)?;
+        let after = rest.split_once(']')?.1;
         let text = after.trim();
         if !text.is_empty() {
             return Some(text.to_string());
         }
     }
     if let Some(rest) = line.strip_prefix("* [") {
-        let after = rest.splitn(2, ']').nth(1)?;
+        let after = rest.split_once(']')?.1;
         let text = after.trim();
         if !text.is_empty() {
             return Some(text.to_string());

@@ -512,7 +512,7 @@ impl TuiApp {
         // Calculate grid dimensions
         let card_width: u16 = 22;
         let cols = (inner.width / (card_width + 2)).max(1);
-        let rows = (self.filtered.len() as u16 + cols - 1) / cols;
+        let rows = (self.filtered.len() as u16).div_ceil(cols);
 
         // Find our selected position
         let sel_row = self.selected as u16 / cols;
