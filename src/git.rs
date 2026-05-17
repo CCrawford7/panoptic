@@ -140,7 +140,9 @@ fn get_ahead_behind(repo: &git2::Repository) -> Result<(u32, u32)> {
 }
 
 /// Get info about the last commit
-fn get_last_commit_info(repo: &git2::Repository) -> (Option<DateTime<Utc>>, Option<String>, Option<String>, u32) {
+fn get_last_commit_info(
+    repo: &git2::Repository,
+) -> (Option<DateTime<Utc>>, Option<String>, Option<String>, u32) {
     let mut revwalk = match repo.revwalk() {
         Ok(rw) => rw,
         Err(_) => return (None, None, None, 0),
@@ -173,13 +175,7 @@ fn get_last_commit_info(repo: &git2::Repository) -> (Option<DateTime<Utc>>, Opti
                         .unwrap_or("")
                         .to_string(),
                 );
-                last_author = Some(
-                    commit
-                        .author()
-                        .name()
-                        .unwrap_or("unknown")
-                        .to_string(),
-                );
+                last_author = Some(commit.author().name().unwrap_or("unknown").to_string());
             }
         }
     }

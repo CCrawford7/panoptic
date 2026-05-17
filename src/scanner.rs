@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::git::get_git_state;
 use crate::parser::parse_agent_files;
-use crate::project::{Project, ProjectType};
+use crate::project::{DepCategory, Dependency, Project, ProjectType};
 use crate::roots::ScanRoot;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -190,9 +190,11 @@ pub fn scan_directory(path: &Path, config: &Config) -> Result<ScanResult> {
             }
             Err(e) => {
                 // Log but don't fail on permission errors, broken symlinks, etc.
-                result
-                    .errors
-                    .push(format!("Skipping {}: {}", e.path().unwrap_or(walk_root.as_path()).display(), e));
+                result.errors.push(format!(
+                    "Skipping {}: {}",
+                    e.path().unwrap_or(walk_root.as_path()).display(),
+                    e
+                ));
             }
         }
     }
@@ -201,7 +203,9 @@ pub fn scan_directory(path: &Path, config: &Config) -> Result<ScanResult> {
     if is_project_root(&walk_root) || !candidates.is_empty() {
         // Root itself might be a project if it has indicators
         let root_has_indicators = walk_root.join(".git").exists()
-            || candidates.iter().any(|c| c.parent().is_some_and(|p| p == walk_root));
+            || candidates
+                .iter()
+                .any(|c| c.parent().is_some_and(|p| p == walk_root));
 
         if !root_has_indicators {
             // Check if any of the top-level dirs are projects
@@ -236,9 +240,9 @@ pub fn scan_directory(path: &Path, config: &Config) -> Result<ScanResult> {
     let top_level: Vec<PathBuf> = candidates
         .iter()
         .filter(|c| {
-            !candidates.iter().any(|other| {
-                other != *c && c.starts_with(other)
-            })
+            !candidates
+                .iter()
+                .any(|other| other != *c && c.starts_with(other))
         })
         .cloned()
         .collect();
@@ -304,6 +308,237 @@ pub fn scan_all_roots(roots: &[ScanRoot], config: &Config) -> Result<ScanResult>
     Ok(result)
 }
 
+/// Parse dependencies from a Cargo.toml
+fn parse_cargo_deps(path: &Path) -> Option<Vec<Dependency>> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let parsed: toml::Value = content.parse().ok()?;
+    let mut deps = Vec::new();
+
+    for section in &["dependencies", "dev-dependencies", "build-dependencies"] {
+        let category = match *section {
+            "dependencies" => DepCategory::Runtime,
+            "dev-dependencies" => DepCategory::Dev,
+            "build-dependencies" => DepCategory::Build,
+            _ => continue,
+        };
+        if let Some(table) = parsed.get(section).and_then(|v| v.as_table()) {
+            for (name, value) in table {
+                let version = match value {
+                    toml::Value::String(v) => v.clone(),
+                    toml::Value::Table(t) => t
+                        .get("version")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("*")
+                        .to_string(),
+                    _ => "*".to_string(),
+                };
+                if name != "panoptic" {
+                    // Skip self-reference
+                    deps.push(Dependency {
+                        name: name.clone(),
+                        version,
+                        category: category.clone(),
+                    });
+                }
+            }
+        }
+    }
+    Some(deps)
+}
+
+/// Parse dependencies from a package.json
+fn parse_package_json_deps(path: &Path) -> Option<Vec<Dependency>> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let parsed: serde_json::Value = serde_json::from_str(&content).ok()?;
+    let mut deps = Vec::new();
+
+    for (key, section_key) in [
+        ("dependencies", DepCategory::Runtime),
+        ("devDependencies", DepCategory::Dev),
+    ] {
+        if let Some(obj) = parsed.get(key).and_then(|v| v.as_object()) {
+            for (name, version) in obj {
+                deps.push(Dependency {
+                    name: name.clone(),
+                    version: version.as_str().unwrap_or("*").to_string(),
+                    category: section_key.clone(),
+                });
+            }
+        }
+    }
+    Some(deps)
+}
+
+/// Parse dependencies from a pyproject.toml
+fn parse_pyproject_deps(path: &Path) -> Option<Vec<Dependency>> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let parsed: toml::Value = content.parse().ok()?;
+    let mut deps = Vec::new();
+
+    // Try [project.dependencies]
+    if let Some(arr) = parsed
+        .get("project")
+        .and_then(|v| v.get("dependencies"))
+        .and_then(|v| v.as_array())
+    {
+        for item in arr {
+            if let Some(s) = item.as_str() {
+                // Format: "package>=1.0" or "package==1.0" or "package"
+                let parts: Vec<&str> = s.splitn(2, ['>', '<', '=', '~', '!']).collect();
+                let name = parts[0].trim().to_string();
+                let version = parts
+                    .get(1)
+                    .map(|v| v.trim().to_string())
+                    .unwrap_or_else(|| "*".to_string());
+                if !name.is_empty() {
+                    deps.push(Dependency {
+                        name,
+                        version,
+                        category: DepCategory::Runtime,
+                    });
+                }
+            }
+        }
+    }
+
+    // Try [project.optional-dependencies]
+    if let Some(table) = parsed
+        .get("project")
+        .and_then(|v| v.get("optional-dependencies"))
+        .and_then(|v| v.as_table())
+    {
+        for (_group, items) in table {
+            if let Some(arr) = items.as_array() {
+                for item in arr {
+                    if let Some(s) = item.as_str() {
+                        let parts: Vec<&str> = s.splitn(2, ['>', '<', '=', '~', '!']).collect();
+                        let name = parts[0].trim().to_string();
+                        if !name.is_empty() && !deps.iter().any(|d| d.name == name) {
+                            deps.push(Dependency {
+                                name,
+                                version: "*".to_string(),
+                                category: DepCategory::Optional,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Some(deps)
+}
+
+/// Parse dependencies from a requirements.txt
+fn parse_requirements_txt(path: &Path) -> Option<Vec<Dependency>> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let mut deps = Vec::new();
+
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with('-') {
+            continue;
+        }
+        let parts: Vec<&str> = line.splitn(2, ['>', '<', '=', '~', '!']).collect();
+        let name = parts[0].trim().to_string();
+        let version = parts
+            .get(1)
+            .map(|v| v.trim().to_string())
+            .unwrap_or_else(|| "*".to_string());
+        if !name.is_empty() {
+            deps.push(Dependency {
+                name,
+                version,
+                category: DepCategory::Runtime,
+            });
+        }
+    }
+    Some(deps)
+}
+
+/// Parse dependencies from a go.mod
+fn parse_go_mod_deps(path: &Path) -> Option<Vec<Dependency>> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let mut deps = Vec::new();
+    let mut in_require = false;
+
+    for line in content.lines() {
+        let line = line.trim();
+        if line.starts_with("require (") {
+            in_require = true;
+            continue;
+        }
+        if in_require {
+            if line == ")" {
+                break;
+            }
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 2 {
+                deps.push(Dependency {
+                    name: parts[0].to_string(),
+                    version: parts[1].to_string(),
+                    category: DepCategory::Runtime,
+                });
+            }
+        }
+        // Single-line require
+        if line.starts_with("require ") {
+            let rest = line.trim_start_matches("require ");
+            let parts: Vec<&str> = rest.split_whitespace().collect();
+            if parts.len() >= 2 {
+                deps.push(Dependency {
+                    name: parts[0].to_string(),
+                    version: parts[1].to_string(),
+                    category: DepCategory::Runtime,
+                });
+            }
+        }
+    }
+    Some(deps)
+}
+
+/// Detect and parse dependencies for a project
+fn parse_dependencies(project_path: &Path, project_type: &ProjectType) -> Vec<Dependency> {
+    match project_type {
+        ProjectType::Rust => {
+            let path = project_path.join("Cargo.toml");
+            if path.exists() {
+                parse_cargo_deps(&path).unwrap_or_default()
+            } else {
+                Vec::new()
+            }
+        }
+        ProjectType::TypeScript | ProjectType::JavaScript => {
+            let path = project_path.join("package.json");
+            if path.exists() {
+                parse_package_json_deps(&path).unwrap_or_default()
+            } else {
+                Vec::new()
+            }
+        }
+        ProjectType::Python => {
+            let mut deps = Vec::new();
+            let pyproject = project_path.join("pyproject.toml");
+            if pyproject.exists() {
+                deps.extend(parse_pyproject_deps(&pyproject).unwrap_or_default());
+            }
+            let requirements = project_path.join("requirements.txt");
+            if requirements.exists() {
+                deps.extend(parse_requirements_txt(&requirements).unwrap_or_default());
+            }
+            deps
+        }
+        ProjectType::Go => {
+            let path = project_path.join("go.mod");
+            if path.exists() {
+                parse_go_mod_deps(&path).unwrap_or_default()
+            } else {
+                Vec::new()
+            }
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// Scan a single project directory
 fn scan_single_project(project_path: &Path, config: &Config) -> Result<Option<Project>> {
     let project_name = project_path
@@ -343,6 +578,9 @@ fn scan_single_project(project_path: &Path, config: &Config) -> Result<Option<Pr
     // Parse agent files
     let agent = parse_agent_files(project_path);
 
+    // Parse dependencies
+    let dependencies = parse_dependencies(project_path, &project_type);
+
     // Determine activity level
     let days_since = {
         let now = Utc::now();
@@ -363,7 +601,10 @@ fn scan_single_project(project_path: &Path, config: &Config) -> Result<Option<Pr
         is_git_repo,
         git,
         agent,
+        dependencies,
         tags: Vec::new(),
+        note: None,
+        user_status: None,
         activity,
     };
 
@@ -595,9 +836,15 @@ mod tests {
         let dir = temp_dir("ignore-hidden");
         fs::create_dir(dir.join(".hidden")).unwrap();
 
-        let entry = WalkDir::new(&dir).into_iter().filter_entry(|e| !should_ignore(e, &config)).collect::<Vec<_>>();
+        let entry = WalkDir::new(&dir)
+            .into_iter()
+            .filter_entry(|e| !should_ignore(e, &config))
+            .collect::<Vec<_>>();
         let hidden_found = entry.iter().any(|e| {
-            e.as_ref().ok().map(|e| e.file_name().to_string_lossy().starts_with('.')).unwrap_or(false)
+            e.as_ref()
+                .ok()
+                .map(|e| e.file_name().to_string_lossy().starts_with('.'))
+                .unwrap_or(false)
         });
         // The hidden dir should be filtered out
         assert!(!hidden_found, "hidden dir should be filtered out");
@@ -616,9 +863,15 @@ mod tests {
             .filter_entry(|e| !should_ignore(e, &config))
             .collect();
         let hidden_found = entries.iter().any(|e| {
-            e.as_ref().ok().map(|e| e.file_name().to_string_lossy() == ".visible").unwrap_or(false)
+            e.as_ref()
+                .ok()
+                .map(|e| e.file_name().to_string_lossy() == ".visible")
+                .unwrap_or(false)
         });
-        assert!(hidden_found, "hidden dir should be visible when show_hidden is true");
+        assert!(
+            hidden_found,
+            "hidden dir should be visible when show_hidden is true"
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 

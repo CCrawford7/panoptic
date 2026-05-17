@@ -462,6 +462,210 @@ h1 {
     content: "→ ";
 }
 
+/* Dependency Grid */
+.dep-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.dep-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-family: monospace;
+    background: rgba(139, 148, 158, 0.1);
+    border: 1px solid var(--border);
+}
+
+.dep-chip.dep-runtime {
+    border-color: rgba(88, 166, 255, 0.3);
+    background: rgba(88, 166, 255, 0.08);
+}
+
+.dep-chip.dep-dev {
+    border-color: rgba(210, 153, 34, 0.3);
+    background: rgba(210, 153, 34, 0.08);
+}
+
+.dep-chip.dep-build {
+    border-color: rgba(188, 140, 255, 0.3);
+    background: rgba(188, 140, 255, 0.08);
+}
+
+.dep-chip.dep-optional {
+    border-color: rgba(139, 148, 158, 0.3);
+    background: rgba(139, 148, 158, 0.08);
+}
+
+.dep-name {
+    color: var(--text);
+}
+
+.dep-version {
+    color: var(--text-dim);
+}
+
+.dep-more {
+    font-size: 11px;
+    color: var(--text-dim);
+    padding: 3px 8px;
+}
+
+/* Tags */
+.tags-container {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.tags-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.tag-chip {
+    display: inline-block;
+    padding: 2px 8px;
+    font-size: 11px;
+    border-radius: 4px;
+    background: rgba(56, 139, 253, 0.15);
+    border: 1px solid rgba(56, 139, 253, 0.3);
+    color: var(--cyan);
+}
+
+.tag-input-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.tag-input {
+    flex: 1;
+    padding: 4px 8px;
+    font-size: 12px;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    outline: none;
+    font-family: inherit;
+}
+
+.tag-input:focus {
+    border-color: var(--cyan);
+}
+
+/* Note textarea */
+.note-textarea {
+    width: 100%;
+    padding: 8px;
+    font-size: 13px;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    outline: none;
+    font-family: inherit;
+    resize: vertical;
+    line-height: 1.5;
+}
+
+.note-textarea:focus {
+    border-color: var(--cyan);
+}
+
+/* Status select */
+.status-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.status-select {
+    padding: 6px 10px;
+    font-size: 13px;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    outline: none;
+    cursor: pointer;
+    font-family: inherit;
+}
+
+.status-select:focus {
+    border-color: var(--cyan);
+}
+
+.save-indicator {
+    font-size: 14px;
+    color: var(--green);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+/* Action Buttons */
+.action-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.action-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    font-size: 13px;
+    background: rgba(56, 139, 253, 0.1);
+    color: var(--cyan);
+    border: 1px solid rgba(56, 139, 253, 0.3);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all var(--transition);
+    font-family: inherit;
+}
+
+.action-btn:hover {
+    background: rgba(56, 139, 253, 0.2);
+    border-color: var(--cyan);
+}
+
+.action-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.action-btn:disabled:hover {
+    background: rgba(56, 139, 253, 0.1);
+    border-color: rgba(56, 139, 253, 0.3);
+}
+
+.action-icon {
+    font-size: 16px;
+}
+
+.action-btn-small {
+    padding: 4px 10px;
+    font-size: 12px;
+    background: rgba(56, 139, 253, 0.15);
+    color: var(--cyan);
+    border: 1px solid rgba(56, 139, 253, 0.3);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all var(--transition);
+    font-family: inherit;
+}
+
+.action-btn-small:hover {
+    background: rgba(56, 139, 253, 0.25);
+}
+
 /* Roots Bar */
 .roots-bar {
     display: flex;

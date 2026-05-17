@@ -1,3 +1,4 @@
+use crate::project::UserStatus;
 use crate::web::SharedState;
 use axum::{
     extract::{Path, State},
@@ -5,6 +6,7 @@ use axum::{
     response::{Html, IntoResponse, Json},
 };
 use rust_embed::RustEmbed;
+use std::process::Command as StdCommand;
 
 #[derive(RustEmbed)]
 #[folder = "static/"]
@@ -23,7 +25,13 @@ pub async fn index() -> impl IntoResponse {
 }
 
 /// Serve embedded static files
-pub async fn static_files(Path(path): Path<String>) -> (StatusCode, [(axum::http::header::HeaderName, &'static str); 1], Vec<u8>) {
+pub async fn static_files(
+    Path(path): Path<String>,
+) -> (
+    StatusCode,
+    [(axum::http::header::HeaderName, &'static str); 1],
+    Vec<u8>,
+) {
     let path = if path.is_empty() { "index.html" } else { &path };
     match StaticAssets::get(path) {
         Some(content) => {
@@ -178,15 +186,24 @@ pub async fn get_stats(State(state): State<SharedState>) -> Json<serde_json::Val
     let projects = &state.projects;
 
     let total = projects.len();
-    let active = projects.iter().filter(|p| p.activity.label() == "Active").count();
-    let dirty = projects.iter().filter(|p| p.git.as_ref().map(|g| g.is_dirty).unwrap_or(false)).count();
+    let active = projects
+        .iter()
+        .filter(|p| p.activity.label() == "Active")
+        .count();
+    let dirty = projects
+        .iter()
+        .filter(|p| p.git.as_ref().map(|g| g.is_dirty).unwrap_or(false))
+        .count();
     let git_repos = projects.iter().filter(|p| p.is_git_repo).count();
     let with_context = projects.iter().filter(|p| p.agent.is_some()).count();
 
     // Count by type
-    let mut type_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut type_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
     for p in projects {
-        *type_counts.entry(p.project_type.label().to_string()).or_insert(0) += 1;
+        *type_counts
+            .entry(p.project_type.label().to_string())
+            .or_insert(0) += 1;
     }
 
     // Total size
@@ -219,10 +236,11 @@ pub async fn refresh(State(state): State<SharedState>) -> Json<serde_json::Value
     let config = &state.config;
 
     // Rescan all roots
-    if let Ok(result) = crate::scanner::scan_all_roots(&roots, config) {
+    if let Ok(mut result) = crate::scanner::scan_all_roots(&roots, config) {
         let count = result.projects.len();
+        // Re-merge user metadata after rescan
+        crate::data::merge_user_data(&mut result.projects, &state.data_store);
         state.projects = result.projects;
-        // Already sorted by scan_all_roots
 
         Json(serde_json::json!({
             "status": "ok",
@@ -297,14 +315,12 @@ pub async fn add_root(
     // Rescan with new root
     let roots = state.roots.clone();
     let config = &state.config;
-    if let Ok(result) = crate::scanner::scan_all_roots(&roots, config) {
+    if let Ok(mut result) = crate::scanner::scan_all_roots(&roots, config) {
+        crate::data::merge_user_data(&mut result.projects, &state.data_store);
         state.projects = result.projects;
     }
 
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({ "status": "ok" })),
-    )
+    (StatusCode::OK, Json(serde_json::json!({ "status": "ok" })))
 }
 
 /// Remove a scan root
@@ -326,14 +342,12 @@ pub async fn remove_root(
     // Rescan without the removed root
     let roots = state.roots.clone();
     let config = &state.config;
-    if let Ok(result) = crate::scanner::scan_all_roots(&roots, config) {
+    if let Ok(mut result) = crate::scanner::scan_all_roots(&roots, config) {
+        crate::data::merge_user_data(&mut result.projects, &state.data_store);
         state.projects = result.projects;
     }
 
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({ "status": "ok" })),
-    )
+    (StatusCode::OK, Json(serde_json::json!({ "status": "ok" })))
 }
 
 /// Update a scan root (toggle enabled / update label)
@@ -362,12 +376,263 @@ pub async fn update_root(
     // Rescan
     let roots = state.roots.clone();
     let config = &state.config;
-    if let Ok(result) = crate::scanner::scan_all_roots(&roots, config) {
+    if let Ok(mut result) = crate::scanner::scan_all_roots(&roots, config) {
+        crate::data::merge_user_data(&mut result.projects, &state.data_store);
         state.projects = result.projects;
     }
 
+    (StatusCode::OK, Json(serde_json::json!({ "status": "ok" })))
+}
+
+// ─── User Metadata API ─────────────────────────────────────
+
+/// Update tags for a project
+pub async fn update_tags(
+    State(state): State<SharedState>,
+    Path(index): Path<usize>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let mut state = state.lock().unwrap();
+    if index >= state.projects.len() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "status": "error", "message": "Invalid index" })),
+        );
+    }
+
+    let tags: Vec<String> = body
+        .get("tags")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    state.projects[index].tags = tags.clone();
+
+    // Persist to data store
+    let path = state.projects[index].path.to_string_lossy().to_string();
+    let meta = crate::data::ProjectMeta {
+        tags: tags.clone(),
+        note: state.projects[index].note.clone(),
+        status: state.projects[index]
+            .user_status
+            .as_ref()
+            .map(|s| s.label().to_string()),
+    };
+    state.data_store.projects.insert(path, meta);
+    let _ = crate::data::save_data(&state.data_store);
+
     (
         StatusCode::OK,
-        Json(serde_json::json!({ "status": "ok" })),
+        Json(serde_json::json!({ "status": "ok", "tags": tags })),
     )
+}
+
+/// Update note for a project
+pub async fn update_note(
+    State(state): State<SharedState>,
+    Path(index): Path<usize>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let mut state = state.lock().unwrap();
+    if index >= state.projects.len() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "status": "error", "message": "Invalid index" })),
+        );
+    }
+
+    let note = body.get("note").and_then(|v| v.as_str()).map(String::from);
+    state.projects[index].note = note.clone();
+
+    // Persist to data store
+    let path = state.projects[index].path.to_string_lossy().to_string();
+    let meta = crate::data::ProjectMeta {
+        tags: state.projects[index].tags.clone(),
+        note: note.clone(),
+        status: state.projects[index]
+            .user_status
+            .as_ref()
+            .map(|s| s.label().to_string()),
+    };
+    state.data_store.projects.insert(path, meta);
+    let _ = crate::data::save_data(&state.data_store);
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "status": "ok", "note": note })),
+    )
+}
+
+/// Update user status for a project
+pub async fn update_status(
+    State(state): State<SharedState>,
+    Path(index): Path<usize>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let mut state = state.lock().unwrap();
+    if index >= state.projects.len() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "status": "error", "message": "Invalid index" })),
+        );
+    }
+
+    let status_str = body.get("status").and_then(|v| v.as_str()).unwrap_or("");
+    let user_status = UserStatus::parse(status_str);
+
+    // Update activity level based on status
+    if let Some(ref s) = user_status {
+        match s {
+            UserStatus::Complete => {
+                state.projects[index].activity = crate::project::ActivityLevel::Done
+            }
+            UserStatus::Archived => {
+                state.projects[index].activity = crate::project::ActivityLevel::Archived
+            }
+            UserStatus::Active => {
+                state.projects[index].activity = crate::project::ActivityLevel::Active
+            }
+            _ => {}
+        }
+    }
+
+    state.projects[index].user_status = user_status.clone();
+
+    // Persist to data store
+    let path = state.projects[index].path.to_string_lossy().to_string();
+    let meta = crate::data::ProjectMeta {
+        tags: state.projects[index].tags.clone(),
+        note: state.projects[index].note.clone(),
+        status: user_status.as_ref().map(|s| s.label().to_string()),
+    };
+    state.data_store.projects.insert(path, meta);
+    let _ = crate::data::save_data(&state.data_store);
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "status": "ok", "user_status": user_status.map(|s| s.label()) })),
+    )
+}
+
+// ─── Quick Actions API ─────────────────────────────────────
+
+/// Trigger a quick action for a project
+pub async fn project_action(
+    State(state): State<SharedState>,
+    Path(index): Path<usize>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let state = state.lock().unwrap();
+    if index >= state.projects.len() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "status": "error", "message": "Invalid index" })),
+        );
+    }
+
+    let project = &state.projects[index];
+    let action = body.get("action").and_then(|v| v.as_str()).unwrap_or("");
+    let project_path = project.path.to_string_lossy().to_string();
+
+    match action {
+        "editor" => {
+            let editor = state.config.editor_cmd();
+            let result = StdCommand::new(&editor).arg(&project_path).spawn();
+            match result {
+                Ok(_) => (
+                    StatusCode::OK,
+                    Json(
+                        serde_json::json!({ "status": "ok", "message": format!("Opened {} in {}", project_path, editor) }),
+                    ),
+                ),
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(
+                        serde_json::json!({ "status": "error", "message": format!("Failed to open editor: {}", e) }),
+                    ),
+                ),
+            }
+        }
+        "terminal" => {
+            let terminal = state.config.terminal_cmd();
+            let cwd_flag = crate::config::Config::terminal_cwd_flag(&terminal);
+            let result = StdCommand::new(&terminal)
+                .arg(cwd_flag)
+                .arg(&project_path)
+                .spawn();
+            match result {
+                Ok(_) => (
+                    StatusCode::OK,
+                    Json(
+                        serde_json::json!({ "status": "ok", "message": format!("Opened terminal for {}", project_path) }),
+                    ),
+                ),
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(
+                        serde_json::json!({ "status": "error", "message": format!("Failed to open terminal: {}", e) }),
+                    ),
+                ),
+            }
+        }
+        "file_manager" => {
+            let open_result = open::that(&project_path);
+            match open_result {
+                Ok(_) => (
+                    StatusCode::OK,
+                    Json(
+                        serde_json::json!({ "status": "ok", "message": format!("Opened file manager for {}", project_path) }),
+                    ),
+                ),
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(
+                        serde_json::json!({ "status": "error", "message": format!("Failed to open file manager: {}", e) }),
+                    ),
+                ),
+            }
+        }
+        "github" => {
+            // Try to open the GitHub remote
+            if let Some(git) = &project.git {
+                if git.has_remote {
+                    // Try to get the remote URL
+                    if let Ok(repo) = git2::Repository::open(&project.path) {
+                        if let Ok(remote) = repo.find_remote("origin") {
+                            if let Some(url) = remote.url() {
+                                // Convert git URL to web URL
+                                let web_url = url
+                                    .replace("git@github.com:", "https://github.com/")
+                                    .replace("git@github.com/", "https://github.com/")
+                                    .replace(".git", "");
+                                let _ = open::that(&web_url);
+                                return (
+                                    StatusCode::OK,
+                                    Json(
+                                        serde_json::json!({ "status": "ok", "message": format!("Opened {}", web_url) }),
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            (
+                StatusCode::BAD_REQUEST,
+                Json(
+                    serde_json::json!({ "status": "error", "message": "No GitHub remote configured for this project" }),
+                ),
+            )
+        }
+        _ => (
+            StatusCode::BAD_REQUEST,
+            Json(
+                serde_json::json!({ "status": "error", "message": format!("Unknown action: {}", action) }),
+            ),
+        ),
+    }
 }

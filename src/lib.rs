@@ -1,4 +1,5 @@
 pub mod config;
+pub mod data;
 pub mod git;
 pub mod parser;
 pub mod project;

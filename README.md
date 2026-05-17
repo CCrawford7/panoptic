@@ -37,24 +37,45 @@ Automatically reads each project's `README.md`, `brief.md`, and `summary.md` to 
 ### 📋 Agent Context Parsing
 Reads your `CLAUDE.md`, `AGENTS.md`, `brief.md`, `PLAN.md`, and other project management files. Extracts current phase, task, next steps, blockers, checklist progress, and recent decisions.
 
+### 📦 Dependency Parsing
+Reads dependencies from `Cargo.toml` (Rust), `package.json` (JavaScript/TypeScript), `pyproject.toml`/`requirements.txt` (Python), and `go.mod` (Go). Dependencies are displayed in the project detail view.
+
+### 🏷️ Tags, Notes & Status
+Annotate any project with custom tags, a personal note, and a user-set status (Planning, Active, Paused, Review, Complete, Abandoned, Archived). Your metadata is persisted in `~/.config/panoptic/data.toml` and survives rescans.
+
+### ⚡ Quick Actions
+Open any project in your editor, terminal, file manager, or on GitHub — directly from the dashboard. Editor and terminal commands are auto-detected from environment variables.
+
+### 📤 Context Export
+Export a project's complete context (description, git state, agent context, dependencies) as a Markdown summary — perfect for sharing with AI coding assistants.
+
+```bash
+panoptic export my-project
+```
+
 ### 🖥️ Dual Interface
 
 **Terminal UI (TUI)** — Keyboard-driven grid with:
 - Color-coded project cards with activity indicators
 - Filter by activity, type, or search
-- Detail view with full git and agent context
+- Detail view with full git, agent context, dependencies, tags, notes, and status
+- Quick actions: `o` for editor, `t` for terminal, `f` for files, `g` for GitHub
 - Vim-style keybindings (`j/k` to navigate, `/` to search)
 
 **Web Dashboard** — SPA with:
 - Responsive card grid with live search and filtering
-- Click-through detail modal with full git and agent context
+- Click-through detail modal with full git, agent context, dependencies, tags, notes, and status
+- Inline tag editing, note editing, and status selection
+- Quick action buttons for editor, terminal, files, and GitHub
 - REST API at `/api/projects`, `/api/stats`, `/api/roots`
+- User metadata endpoints: `POST /api/projects/:index/tags|note|status|action`
 - **Multi-root management**: add, remove, enable/disable scan roots at runtime
 - Auto-refresh every 60 seconds
 
 ### 📊 Exportable
 ```bash
-panoptic --json    # Output project data as JSON for scripting
+panoptic --json              # Output project data as JSON for scripting
+panoptic export <name>       # Export project context as Markdown
 ```
 
 ## Quick Start
@@ -104,6 +125,8 @@ panoptic -c ~/.config/panoptic/config.toml ~/projects
 
 ### Keybindings (TUI)
 
+#### Overview
+
 | Key | Action |
 |-----|--------|
 | `↑`/`k`, `↓`/`j` | Navigate projects |
@@ -115,6 +138,17 @@ panoptic -c ~/.config/panoptic/config.toml ~/projects
 | `r` | Refresh scan |
 | `?`/`h` | Toggle help |
 | `q`/`Esc` | Quit |
+
+#### Detail View
+
+| Key | Action |
+|-----|--------|
+| `↑`/`k`, `↓`/`j` | Previous/next project |
+| `Esc`/`q` | Back to overview |
+| `o` | Open in editor |
+| `t` | Open terminal in project directory |
+| `f` | Open file manager |
+| `g` | Open GitHub remote |
 
 ## Configuration
 
@@ -150,6 +184,7 @@ panoptic/
 │   ├── config.rs    # Configuration
 │   ├── project.rs   # Data model
 │   ├── roots.rs     # Multi-root persistence & management
+│   ├── data.rs      # User metadata persistence (tags, notes, status)
 │   ├── scanner.rs   # Project discovery & detection
 │   ├── git.rs       # Git state via libgit2
 │   ├── parser.rs    # Agent file parsing
@@ -173,10 +208,10 @@ panoptic/
 ## Roadmap
 
 - [x] Multi-root scanning with runtime management
-- [ ] Dependency parsing (Cargo.toml, package.json, pyproject.toml, go.mod)
-- [ ] Quick actions (open in editor/terminal/file manager/GitHub)
-- [ ] Tags, notes, and user-set project status
-- [ ] Context export for AI sessions (`panoptic export`)
+- [x] Dependency parsing (Cargo.toml, package.json, pyproject.toml, go.mod)
+- [x] Quick actions (open in editor/terminal/file manager/GitHub)
+- [x] Tags, notes, and user-set project status
+- [x] Context export for AI sessions (`panoptic export`)
 - [ ] File watching / live updates
 - [ ] Full-text search across all project docs (tantivy)
 - [ ] Project health scoring

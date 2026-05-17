@@ -7,9 +7,7 @@ pub fn parse_agent_files(project_path: &Path) -> Option<AgentContext> {
     let mut found_readme = false;
 
     // --- README / docs parsing (project description) ---
-    let readme_candidates = [
-        "README.md", "README", "readme.md", "Readme.md",
-    ];
+    let readme_candidates = ["README.md", "README", "readme.md", "Readme.md"];
     for filename in &readme_candidates {
         let file_path = project_path.join(filename);
         if file_path.exists() {
@@ -39,9 +37,7 @@ pub fn parse_agent_files(project_path: &Path) -> Option<AgentContext> {
     }
 
     // --- Agent / task tracking files ---
-    let agent_files = [
-        "CLAUDE.md", "AGENTS.md", "PLAN.md", "ROADMAP.md", "TODO.md",
-    ];
+    let agent_files = ["CLAUDE.md", "AGENTS.md", "PLAN.md", "ROADMAP.md", "TODO.md"];
 
     for filename in &agent_files {
         let file_path = project_path.join(filename);
@@ -93,7 +89,10 @@ fn extract_readme_description(content: &str) -> Option<String> {
                 break; // hit another heading, stop
             }
             // Skip badges, shilds, image embeds, action links
-            if trimmed.starts_with("[![") || trimmed.starts_with("<a ") || trimmed.starts_with("```") {
+            if trimmed.starts_with("[![")
+                || trimmed.starts_with("<a ")
+                || trimmed.starts_with("```")
+            {
                 continue;
             }
             // Clean up the paragraph: strip leading "> " (blockquotes), trim
@@ -143,16 +142,23 @@ mod tests {
 
     #[test]
     fn test_extract_readme_description_simple() {
-        let content = "# My Project\n\nThis is a cool project that does things.\n\nMore details here.";
+        let content =
+            "# My Project\n\nThis is a cool project that does things.\n\nMore details here.";
         let desc = extract_readme_description(content);
-        assert_eq!(desc, Some("This is a cool project that does things.".to_string()));
+        assert_eq!(
+            desc,
+            Some("This is a cool project that does things.".to_string())
+        );
     }
 
     #[test]
     fn test_extract_readme_description_with_badges() {
         let content = "# My Project\n\n[![CI](https://img.shields.io/badge/ci-passing.svg)](https://example.com)\n\nThis is the real description after badges.\n\nMore stuff.";
         let desc = extract_readme_description(content);
-        assert_eq!(desc, Some("This is the real description after badges.".to_string()));
+        assert_eq!(
+            desc,
+            Some("This is the real description after badges.".to_string())
+        );
     }
 
     #[test]
@@ -182,14 +188,19 @@ mod tests {
 
     #[test]
     fn test_extract_first_paragraph() {
-        let content = "# Heading\n\nThis is the first real paragraph with enough text.\n\nAnother para.";
+        let content =
+            "# Heading\n\nThis is the first real paragraph with enough text.\n\nAnother para.";
         let result = extract_first_paragraph(content);
-        assert_eq!(result, Some("This is the first real paragraph with enough text.".to_string()));
+        assert_eq!(
+            result,
+            Some("This is the first real paragraph with enough text.".to_string())
+        );
     }
 
     #[test]
     fn test_parse_agent_content_checklist() {
-        let content = "# Project Plan\n\n## Tasks\n- [ ] do something\n- [x] done task\n- [ ] another todo\n";
+        let content =
+            "# Project Plan\n\n## Tasks\n- [ ] do something\n- [x] done task\n- [ ] another todo\n";
         let mut context = AgentContext::default();
         parse_agent_content(content, &mut context);
 
@@ -207,8 +218,14 @@ mod tests {
         let mut context = AgentContext::default();
         parse_agent_content(content, &mut context);
 
-        assert_eq!(context.current_phase, Some("Initial Development".to_string()));
-        assert_eq!(context.current_task, Some("Build the core module".to_string()));
+        assert_eq!(
+            context.current_phase,
+            Some("Initial Development".to_string())
+        );
+        assert_eq!(
+            context.current_task,
+            Some("Build the core module".to_string())
+        );
     }
 
     #[test]
@@ -218,7 +235,10 @@ mod tests {
         parse_agent_content(content, &mut context);
 
         assert!(!context.blockers.is_empty());
-        assert!(context.blockers.iter().any(|b| b.contains("API key") || b.contains("dependency")));
+        assert!(context
+            .blockers
+            .iter()
+            .any(|b| b.contains("API key") || b.contains("dependency")));
     }
 
     #[test]
@@ -277,26 +297,40 @@ mod tests {
     fn test_parse_agent_files_with_readme() {
         let dir = std::env::temp_dir().join("panoptic-test-readme");
         let _ = std::fs::create_dir_all(&dir);
-        std::fs::write(dir.join("README.md"), "# Test Project\n\nA description for testing.\n").unwrap();
+        std::fs::write(
+            dir.join("README.md"),
+            "# Test Project\n\nA description for testing.\n",
+        )
+        .unwrap();
 
         let result = parse_agent_files(&dir);
         let _ = std::fs::remove_dir_all(&dir);
 
         assert!(result.is_some());
-        assert_eq!(result.unwrap().description, Some("A description for testing.".to_string()));
+        assert_eq!(
+            result.unwrap().description,
+            Some("A description for testing.".to_string())
+        );
     }
 
     #[test]
     fn test_parse_agent_files_with_brief() {
         let dir = std::env::temp_dir().join("panoptic-test-brief");
         let _ = std::fs::create_dir_all(&dir);
-        std::fs::write(dir.join("brief.md"), "A brief description of the project.\n\nMore details.").unwrap();
+        std::fs::write(
+            dir.join("brief.md"),
+            "A brief description of the project.\n\nMore details.",
+        )
+        .unwrap();
 
         let result = parse_agent_files(&dir);
         let _ = std::fs::remove_dir_all(&dir);
 
         assert!(result.is_some());
-        assert_eq!(result.unwrap().description, Some("A brief description of the project.".to_string()));
+        assert_eq!(
+            result.unwrap().description,
+            Some("A brief description of the project.".to_string())
+        );
     }
 
     #[test]
@@ -304,7 +338,11 @@ mod tests {
         let dir = std::env::temp_dir().join("panoptic-test-full");
         let _ = std::fs::create_dir_all(&dir);
 
-        std::fs::write(dir.join("README.md"), "# Full Project\n\nA full featured project.\n").unwrap();
+        std::fs::write(
+            dir.join("README.md"),
+            "# Full Project\n\nA full featured project.\n",
+        )
+        .unwrap();
         std::fs::write(dir.join("CLAUDE.md"), "# CLAUDE\n\n## Phase\n\nBeta\n\n## Tasks\n- [x] setup\n- [ ] build feature\n- [ ] ship it\n\n## Next Steps\n- launch\n\nBlocker: need review\n\nDecision: use SQLite\n").unwrap();
 
         let result = parse_agent_files(&dir);
@@ -312,7 +350,10 @@ mod tests {
 
         assert!(result.is_some());
         let ctx = result.unwrap();
-        assert_eq!(ctx.description, Some("A full featured project.".to_string()));
+        assert_eq!(
+            ctx.description,
+            Some("A full featured project.".to_string())
+        );
         assert_eq!(ctx.current_phase, Some("Beta".to_string()));
         assert_eq!(ctx.checklist_total, 3);
         assert_eq!(ctx.checklist_done, 1);
@@ -382,10 +423,7 @@ fn parse_agent_content(content: &str, context: &mut AgentContext) {
             && line.len() > 3
         {
             let after_dot = line.split_once('.').map(|x| x.1).unwrap_or("").trim();
-            if !after_dot.is_empty()
-                && after_dot.len() > 5
-                && !after_dot.starts_with(' ')
-            {
+            if !after_dot.is_empty() && after_dot.len() > 5 && !after_dot.starts_with(' ') {
                 // Might be a "next step" style line
                 let lower = line.to_lowercase();
                 if lower.contains("next") || lower.contains("todo") || lower.contains("step") {
@@ -440,7 +478,8 @@ fn parse_agent_content(content: &str, context: &mut AgentContext) {
                 }
                 // Collect bullet points
                 if next_line.starts_with("- ") || next_line.starts_with("* ") {
-                    let item = next_line.trim_start_matches("- ")
+                    let item = next_line
+                        .trim_start_matches("- ")
                         .trim_start_matches("* ")
                         .trim();
                     if !item.is_empty() {

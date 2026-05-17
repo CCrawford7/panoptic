@@ -25,6 +25,10 @@ pub struct Config {
     pub max_projects: usize,
     /// Show hidden directories (starting with .)
     pub show_hidden: bool,
+    /// Editor command for quick actions (e.g., "code", "vim")
+    pub editor: Option<String>,
+    /// Terminal command for quick actions (e.g., "alacritty", "gnome-terminal")
+    pub terminal: Option<String>,
 }
 
 impl Default for Config {
@@ -47,22 +51,63 @@ impl Default for Config {
                 ".bmad-core".into(),
                 ".bmad-godot-game-dev".into(),
             ],
-            ignore_files: vec![
-                ".DS_Store".into(),
-                "Thumbs.db".into(),
-                ".gitkeep".into(),
-            ],
+            ignore_files: vec![".DS_Store".into(), "Thumbs.db".into(), ".gitkeep".into()],
             stale_days: 90,
             active_days: 30,
             web_port: 3173,
             web_open_browser: true,
             max_projects: 200,
             show_hidden: false,
+            editor: None,
+            terminal: None,
         }
     }
 }
 
 impl Config {
+    /// Get the editor command, with auto-detection fallback
+    pub fn editor_cmd(&self) -> String {
+        self.editor
+            .clone()
+            .or_else(|| std::env::var("EDITOR").ok())
+            .unwrap_or_else(|| {
+                if cfg!(target_os = "macos") {
+                    "open".to_string()
+                } else if cfg!(target_os = "windows") {
+                    "code".to_string()
+                } else {
+                    "xdg-open".to_string()
+                }
+            })
+    }
+
+    /// Get the terminal command, with auto-detection fallback
+    pub fn terminal_cmd(&self) -> String {
+        self.terminal
+            .clone()
+            .or_else(|| std::env::var("TERMINAL").ok())
+            .unwrap_or_else(|| {
+                if cfg!(target_os = "macos") {
+                    "open".to_string()
+                } else if cfg!(target_os = "windows") {
+                    "cmd".to_string()
+                } else {
+                    "x-terminal-emulator".to_string()
+                }
+            })
+    }
+
+    /// Get the flag to set working directory for a terminal
+    pub fn terminal_cwd_flag(term: &str) -> &'static str {
+        match term {
+            "alacritty" | "Alacritty" => "--working-directory",
+            "gnome-terminal" | "gnome-terminal." => "--working-directory",
+            "kitty" => "--directory",
+            "wezterm" => "--cwd",
+            "konsole" => "--workdir",
+            _ => "--working-directory", // best guess
+        }
+    }
     /// Load config from a TOML file, merging with defaults
     pub fn load(path: Option<&PathBuf>) -> Result<Self> {
         let mut config = Config::default();
@@ -95,6 +140,12 @@ impl Config {
         self.web_open_browser = other.web_open_browser;
         self.max_projects = other.max_projects;
         self.show_hidden = other.show_hidden;
+        if other.editor.is_some() {
+            self.editor = other.editor;
+        }
+        if other.terminal.is_some() {
+            self.terminal = other.terminal;
+        }
     }
 
     /// Generate a default config file content

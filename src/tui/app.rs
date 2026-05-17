@@ -1,9 +1,16 @@
 use crate::config::Config;
-use crate::project::{ActivityLevel, Project, ProjectType};
+use crate::project::{ActivityLevel, Project, ProjectType, UserStatus};
 use crate::roots::ScanRoot;
 use crate::scanner::{scan_all_roots, ScanResult};
 use anyhow::Result;
 use chrono::Utc;
+use crossterm::{
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
+    },
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Layout, Rect},
@@ -11,11 +18,6 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
     Frame, Terminal,
-};
-use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers},
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use std::{io, time::Duration, time::Instant};
 
@@ -57,7 +59,7 @@ enum AppMode {
 pub struct TuiApp {
     pub projects: Vec<Project>,
     pub filtered: Vec<usize>, // indices into projects
-    pub selected: usize,       // index into filtered
+    pub selected: usize,      // index into filtered
     pub filter: FilterMode,
     pub search: String,
     mode: AppMode,
@@ -138,8 +140,11 @@ impl TuiApp {
                                 self.projects = std::mem::take(&mut scan_result.projects);
                                 self.scan_result = Some(scan_result);
                                 self.apply_filter();
-                                self.status_message =
-                                    format!("Rescanned {} projects in {}ms", self.projects.len(), duration);
+                                self.status_message = format!(
+                                    "Rescanned {} projects in {}ms",
+                                    self.projects.len(),
+                                    duration
+                                );
                             }
                         }
                     }
@@ -223,7 +228,10 @@ impl TuiApp {
                     self.selected = self.filtered.len().saturating_sub(1);
                 }
                 KeyCode::PageDown => {
-                    self.selected = self.selected.saturating_add(8).min(self.filtered.len().saturating_sub(1));
+                    self.selected = self
+                        .selected
+                        .saturating_add(8)
+                        .min(self.filtered.len().saturating_sub(1));
                 }
                 KeyCode::PageUp => {
                     self.selected = self.selected.saturating_sub(8);
@@ -242,6 +250,77 @@ impl TuiApp {
                 KeyCode::Down | KeyCode::Char('j') => {
                     if idx + 1 < self.projects.len() {
                         self.mode = AppMode::Detail(idx + 1);
+                    }
+                }
+                // Quick actions
+                KeyCode::Char('o') => {
+                    let project = &self.projects[idx];
+                    let editor = self.config.editor_cmd();
+                    let path = project.path.to_string_lossy().to_string();
+                    match std::process::Command::new(&editor).arg(&path).spawn() {
+                        Ok(_) => {
+                            self.status_message = format!("Opened {} in {}", project.name, editor)
+                        }
+                        Err(e) => self.status_message = format!("Failed to open editor: {}", e),
+                    }
+                }
+                KeyCode::Char('t') => {
+                    let project = &self.projects[idx];
+                    let terminal = self.config.terminal_cmd();
+                    let cwd_flag = crate::config::Config::terminal_cwd_flag(&terminal);
+                    let path = project.path.to_string_lossy().to_string();
+                    match std::process::Command::new(&terminal)
+                        .arg(cwd_flag)
+                        .arg(&path)
+                        .spawn()
+                    {
+                        Ok(_) => {
+                            self.status_message = format!("Opened terminal for {}", project.name)
+                        }
+                        Err(e) => self.status_message = format!("Failed to open terminal: {}", e),
+                    }
+                }
+                KeyCode::Char('f') => {
+                    let project = &self.projects[idx];
+                    let path = project.path.to_string_lossy().to_string();
+                    match open::that(&path) {
+                        Ok(_) => {
+                            self.status_message =
+                                format!("Opened file manager for {}", project.name)
+                        }
+                        Err(e) => {
+                            self.status_message = format!("Failed to open file manager: {}", e)
+                        }
+                    }
+                }
+                KeyCode::Char('g') => {
+                    let project = &self.projects[idx];
+                    if let Some(git) = &project.git {
+                        if git.has_remote {
+                            if let Ok(repo) = git2::Repository::open(&project.path) {
+                                if let Ok(remote) = repo.find_remote("origin") {
+                                    if let Some(url) = remote.url() {
+                                        let web_url = url
+                                            .replace("git@github.com:", "https://github.com/")
+                                            .replace("git@github.com/", "https://github.com/")
+                                            .replace(".git", "");
+                                        match open::that(&web_url) {
+                                            Ok(_) => {
+                                                self.status_message = format!("Opened {}", web_url)
+                                            }
+                                            Err(e) => {
+                                                self.status_message =
+                                                    format!("Failed to open: {}", e)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            self.status_message = "No GitHub remote configured".to_string();
+                        }
+                    } else {
+                        self.status_message = "Not a git repository".to_string();
                     }
                 }
                 _ => {}
@@ -265,7 +344,7 @@ impl TuiApp {
                     self.apply_filter();
                 }
                 _ => {}
-            }
+            },
         }
         Action::Continue
     }
@@ -322,8 +401,7 @@ impl TuiApp {
                     let q = self.search.to_lowercase();
                     p.name.to_lowercase().contains(&q)
                         || p.project_type.label().to_lowercase().contains(&q)
-                        || p
-                            .agent
+                        || p.agent
                             .as_ref()
                             .and_then(|a| a.current_phase.as_ref())
                             .map(|ph| ph.to_lowercase().contains(&q))
@@ -346,11 +424,9 @@ impl TuiApp {
         if size.width < 40 || size.height < 10 {
             let text = Text::from("Terminal too small. Minimum 40x10.");
             frame.render_widget(
-                Paragraph::new(text).alignment(Alignment::Center).block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title("Panoptic"),
-                ),
+                Paragraph::new(text)
+                    .alignment(Alignment::Center)
+                    .block(Block::default().borders(Borders::ALL).title("Panoptic")),
                 size,
             );
             return;
@@ -372,10 +448,10 @@ impl TuiApp {
 
     fn render_overview(&self, frame: &mut Frame, area: Rect) {
         let vertical = Layout::vertical([
-            Constraint::Length(3),  // Header
-            Constraint::Length(3),  // Filter bar
-            Constraint::Min(0),     // Project grid
-            Constraint::Length(1),  // Status bar
+            Constraint::Length(3), // Header
+            Constraint::Length(3), // Filter bar
+            Constraint::Min(0),    // Project grid
+            Constraint::Length(1), // Status bar
         ]);
         let [header_area, filter_area, grid_area, status_area] = vertical.areas(area);
 
@@ -404,8 +480,18 @@ impl TuiApp {
         };
 
         let mut title_spans = vec![
-            Span::styled("◉ ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            Span::styled("panoptic", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "◉ ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "panoptic",
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw(format!("  —  {} projects", self.projects.len())),
             Span::styled(
                 format!("  📁 {} ", root_label),
@@ -425,7 +511,9 @@ impl TuiApp {
             title_spans.push(Span::raw("  "));
             title_spans.push(Span::styled(
                 format!("● {} active", active_count),
-                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
             ));
         }
 
@@ -494,10 +582,7 @@ impl TuiApp {
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(Color::DarkGray));
 
-        frame.render_widget(
-            Paragraph::new(Line::from(spans)).block(block),
-            area,
-        );
+        frame.render_widget(Paragraph::new(Line::from(spans)).block(block), area);
     }
 
     fn render_project_grid(&self, frame: &mut Frame, area: Rect) {
@@ -536,7 +621,9 @@ impl TuiApp {
         // Calculate visible range
         let max_visible_rows = inner.height / 10; // each card row is ~10 lines
         let scroll = if max_visible_rows > 0 {
-            (sel_row).saturating_sub(max_visible_rows / 2).min(rows.saturating_sub(max_visible_rows))
+            (sel_row)
+                .saturating_sub(max_visible_rows / 2)
+                .min(rows.saturating_sub(max_visible_rows))
         } else {
             0
         };
@@ -558,7 +645,12 @@ impl TuiApp {
 
                 let x = inner.x + col * (card_width + 2);
                 let y = inner.y + (row - start_row) * 10;
-                let card_area = Rect::new(x, y, card_width.min(inner.width.saturating_sub(col * (card_width + 2))), 9);
+                let card_area = Rect::new(
+                    x,
+                    y,
+                    card_width.min(inner.width.saturating_sub(col * (card_width + 2))),
+                    9,
+                );
 
                 if card_area.width < 10 || card_area.height < 5 {
                     continue;
@@ -569,7 +661,13 @@ impl TuiApp {
         }
     }
 
-    fn render_project_card(&self, frame: &mut Frame, area: Rect, project: &Project, selected: bool) {
+    fn render_project_card(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        project: &Project,
+        selected: bool,
+    ) {
         // Border style based on activity and selection
         let border_style = if selected {
             Style::default()
@@ -609,9 +707,10 @@ impl TuiApp {
         lines.push(Line::from(Span::styled(name, name_style)));
 
         // Divider
-        lines.push(Line::from(
-            Span::styled("─".repeat(area.width as usize - 2), Style::default().fg(Color::DarkGray)),
-        ));
+        lines.push(Line::from(Span::styled(
+            "─".repeat(area.width as usize - 2),
+            Style::default().fg(Color::DarkGray),
+        )));
 
         // Activity + Type
         let activity_dot = match project.activity {
@@ -630,10 +729,15 @@ impl TuiApp {
         ]));
 
         // Size + files
-        let size_text = format!("{}  {} files", project.size_human(), project.file_count_human());
-        lines.push(Line::from(
-            Span::styled(size_text, Style::default().fg(Color::DarkGray)),
-        ));
+        let size_text = format!(
+            "{}  {} files",
+            project.size_human(),
+            project.file_count_human()
+        );
+        lines.push(Line::from(Span::styled(
+            size_text,
+            Style::default().fg(Color::DarkGray),
+        )));
 
         // Git status
         if let Some(git) = &project.git {
@@ -666,9 +770,10 @@ impl TuiApp {
                 } else {
                     desc.clone()
                 };
-                lines.push(Line::from(
-                    Span::styled(desc_short, Style::default().fg(Color::DarkGray)),
-                ));
+                lines.push(Line::from(Span::styled(
+                    desc_short,
+                    Style::default().fg(Color::DarkGray),
+                )));
             }
             // Phase
             if let Some(phase) = &agent.current_phase {
@@ -677,9 +782,12 @@ impl TuiApp {
                 } else {
                     phase.clone()
                 };
-                lines.push(Line::from(
-                    Span::styled(phase_short, Style::default().fg(Color::Magenta).add_modifier(Modifier::ITALIC)),
-                ));
+                lines.push(Line::from(Span::styled(
+                    phase_short,
+                    Style::default()
+                        .fg(Color::Magenta)
+                        .add_modifier(Modifier::ITALIC),
+                )));
             }
         }
 
@@ -725,10 +833,7 @@ impl TuiApp {
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(Color::DarkGray));
 
-        frame.render_widget(
-            Paragraph::new(Line::from(spans)).block(block),
-            area,
-        );
+        frame.render_widget(Paragraph::new(Line::from(spans)).block(block), area);
     }
 
     fn render_detail(&self, frame: &mut Frame, area: Rect, project_idx: usize) {
@@ -748,12 +853,13 @@ impl TuiApp {
         frame.render_widget(block, area);
 
         // Split into left and right panes
-        let horizontal = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]);
+        let horizontal =
+            Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]);
         let [left, right] = horizontal.areas(inner);
 
         // Left pane: project info + git
         let left_layout = Layout::vertical([
-            Constraint::Length(8),  // Project info
+            Constraint::Length(10), // Project info (incl. status/tags/notes)
             Constraint::Min(0),     // Git state
         ]);
         let [info_area, git_area] = left_layout.areas(left);
@@ -763,32 +869,44 @@ impl TuiApp {
             self.render_detail_git(frame, git_area, project);
         }
 
-        // Right pane: agent context + activity
+        // Right pane: agent context + dependencies + keybindings
         let right_layout = Layout::vertical([
-            Constraint::Min(0),     // Agent context
-            Constraint::Length(3),  // Keybindings
+            Constraint::Min(0),    // Agent context
+            Constraint::Length(6), // Dependencies
+            Constraint::Length(3), // Keybindings
         ]);
-        let [agent_area, keys_area] = right_layout.areas(right);
+        let [agent_area, deps_area, keys_area] = right_layout.areas(right);
 
         if project.agent.is_some() {
             self.render_detail_agent(frame, agent_area, project);
         } else {
             frame.render_widget(
-                Paragraph::new(Text::from("No agent context found.\n(CLAUDE.md, AGENTS.md, brief.md, etc.)"))
-                    .style(Style::default().fg(Color::DarkGray))
-                    .alignment(Alignment::Center),
+                Paragraph::new(Text::from(
+                    "No agent context found.\n(CLAUDE.md, AGENTS.md, brief.md, etc.)",
+                ))
+                .style(Style::default().fg(Color::DarkGray))
+                .alignment(Alignment::Center),
                 agent_area,
             );
         }
 
-        // Keybindings
+        // Dependencies
+        self.render_detail_deps(frame, deps_area, project);
+
+        // Keybindings with quick actions
         frame.render_widget(
             Paragraph::new(Text::from(vec![
                 Line::from(vec![
                     Span::styled(" ↑/k prev  ", Style::default().fg(Color::DarkGray)),
                     Span::styled(" ↓/j next  ", Style::default().fg(Color::DarkGray)),
                     Span::styled(" Esc/q back  ", Style::default().fg(Color::DarkGray)),
-                ])
+                ]),
+                Line::from(vec![
+                    Span::styled(" o editor  ", Style::default().fg(Color::Blue)),
+                    Span::styled(" t terminal  ", Style::default().fg(Color::Green)),
+                    Span::styled(" f files  ", Style::default().fg(Color::Yellow)),
+                    Span::styled(" g github  ", Style::default().fg(Color::Magenta)),
+                ]),
             ]))
             .alignment(Alignment::Center),
             keys_area,
@@ -809,7 +927,11 @@ impl TuiApp {
             ]),
             Line::from(vec![
                 Span::styled("Size:     ", Style::default().fg(Color::DarkGray)),
-                Span::raw(format!("{}  ({} files)", project.size_human(), project.file_count)),
+                Span::raw(format!(
+                    "{}  ({} files)",
+                    project.size_human(),
+                    project.file_count
+                )),
             ]),
         ];
 
@@ -827,6 +949,60 @@ impl TuiApp {
             Span::raw(format!("{}d ago", days)),
         ]));
 
+        // User status
+        if let Some(status) = &project.user_status {
+            let status_color = match status {
+                UserStatus::Active => Color::Green,
+                UserStatus::Planning => Color::Cyan,
+                UserStatus::Paused => Color::Yellow,
+                UserStatus::Review => Color::Blue,
+                UserStatus::Complete => Color::Green,
+                UserStatus::Abandoned => Color::Red,
+                UserStatus::Archived => Color::DarkGray,
+            };
+            lines.push(Line::from(vec![
+                Span::styled("Status:   ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    status.label(),
+                    Style::default()
+                        .fg(status_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]));
+        }
+
+        // Tags
+        if !project.tags.is_empty() {
+            let tags_str = project.tags.join(", ");
+            let tags_display = if tags_str.len() > 40 {
+                format!("{}…", &tags_str[..39])
+            } else {
+                tags_str
+            };
+            lines.push(Line::from(vec![
+                Span::styled("Tags:     ", Style::default().fg(Color::DarkGray)),
+                Span::styled(tags_display, Style::default().fg(Color::Cyan)),
+            ]));
+        }
+
+        // Note (first line only)
+        if let Some(note) = &project.note {
+            let note_display = if note.len() > 55 {
+                format!("{}…", &note[..54])
+            } else {
+                note.clone()
+            };
+            lines.push(Line::from(vec![
+                Span::styled("Note:     ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    note_display,
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::ITALIC),
+                ),
+            ]));
+        }
+
         if let Some(git) = &project.git {
             if let Some(msg) = &git.last_commit_message {
                 let msg_short = if msg.len() > 50 {
@@ -841,7 +1017,7 @@ impl TuiApp {
             }
         }
 
-        // Show project description from README in the info pane
+        // Show project description from README
         if let Some(agent) = &project.agent {
             if let Some(desc) = &agent.description {
                 let desc_display = if desc.len() > 60 {
@@ -851,7 +1027,12 @@ impl TuiApp {
                 };
                 lines.push(Line::from(vec![
                     Span::styled("Desc:     ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(desc_display, Style::default().fg(Color::White).add_modifier(Modifier::ITALIC)),
+                    Span::styled(
+                        desc_display,
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::ITALIC),
+                    ),
                 ]));
             }
         }
@@ -861,10 +1042,7 @@ impl TuiApp {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Blue));
 
-        frame.render_widget(
-            Paragraph::new(Text::from(lines)).block(block),
-            area,
-        );
+        frame.render_widget(Paragraph::new(Text::from(lines)).block(block), area);
     }
 
     fn render_detail_git(&self, frame: &mut Frame, area: Rect, project: &Project) {
@@ -877,8 +1055,16 @@ impl TuiApp {
                 Line::from(vec![
                     Span::styled("Status:  ", Style::default().fg(Color::DarkGray)),
                     Span::styled(
-                        if git.is_dirty { "● Dirty" } else { "✓ Clean" },
-                        Style::default().fg(if git.is_dirty { Color::Red } else { Color::Green }),
+                        if git.is_dirty {
+                            "● Dirty"
+                        } else {
+                            "✓ Clean"
+                        },
+                        Style::default().fg(if git.is_dirty {
+                            Color::Red
+                        } else {
+                            Color::Green
+                        }),
                     ),
                 ]),
             ];
@@ -895,12 +1081,10 @@ impl TuiApp {
             }
 
             if git.ahead > 0 || git.behind > 0 {
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        format!("Ahead: {}  Behind: {}", git.ahead, git.behind),
-                        Style::default().fg(Color::Yellow),
-                    ),
-                ]));
+                lines.push(Line::from(vec![Span::styled(
+                    format!("Ahead: {}  Behind: {}", git.ahead, git.behind),
+                    Style::default().fg(Color::Yellow),
+                )]));
             }
 
             if let Some(time) = git.last_commit_time {
@@ -932,11 +1116,52 @@ impl TuiApp {
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Yellow));
 
-            frame.render_widget(
-                Paragraph::new(Text::from(lines)).block(block),
-                area,
-            );
+            frame.render_widget(Paragraph::new(Text::from(lines)).block(block), area);
         }
+    }
+
+    fn render_detail_deps(&self, frame: &mut Frame, area: Rect, project: &Project) {
+        if project.dependencies.is_empty() {
+            return;
+        }
+
+        let mut lines = Vec::new();
+        let total = project.dependencies.len();
+        let show_count = 4.min(total);
+
+        for dep in project.dependencies.iter().take(show_count) {
+            let dep_color = match dep.category {
+                crate::project::DepCategory::Runtime => Color::Cyan,
+                crate::project::DepCategory::Dev => Color::Yellow,
+                crate::project::DepCategory::Build => Color::Magenta,
+                crate::project::DepCategory::Optional => Color::DarkGray,
+            };
+            let name_display = if dep.name.len() > 20 {
+                format!("{}…", &dep.name[..19])
+            } else {
+                dep.name.clone()
+            };
+            lines.push(Line::from(vec![
+                Span::styled("  • ", Style::default().fg(dep_color)),
+                Span::styled(name_display, Style::default().fg(Color::White)),
+                Span::raw(" "),
+                Span::styled(&dep.version, Style::default().fg(Color::DarkGray)),
+            ]));
+        }
+
+        if total > show_count {
+            lines.push(Line::from(Span::styled(
+                format!("  … and {} more", total - show_count),
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+
+        let block = Block::default()
+            .title(format!(" Dependencies ({}) ", total))
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan));
+
+        frame.render_widget(Paragraph::new(Text::from(lines)).block(block), area);
     }
 
     fn render_detail_agent(&self, frame: &mut Frame, area: Rect, project: &Project) {
@@ -951,7 +1176,12 @@ impl TuiApp {
                     desc.clone()
                 };
                 lines.push(Line::from(vec![
-                    Span::styled("About:  ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        "About:  ",
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                     Span::raw(desc_short),
                 ]));
                 lines.push(Line::from(Span::raw("")));
@@ -959,7 +1189,12 @@ impl TuiApp {
 
             if let Some(phase) = &agent.current_phase {
                 lines.push(Line::from(vec![
-                    Span::styled("Phase: ", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        "Phase: ",
+                        Style::default()
+                            .fg(Color::Magenta)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                     Span::raw(phase),
                 ]));
                 lines.push(Line::from(Span::raw("")));
@@ -967,7 +1202,12 @@ impl TuiApp {
 
             if let Some(task) = &agent.current_task {
                 lines.push(Line::from(vec![
-                    Span::styled("Task:  ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        "Task:  ",
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                     Span::raw(task),
                 ]));
                 lines.push(Line::from(Span::raw("")));
@@ -975,19 +1215,22 @@ impl TuiApp {
 
             if agent.checklist_total > 0 {
                 let pct = agent.checklist_done as f64 / agent.checklist_total as f64 * 100.0;
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        format!("Progress: {}/{} ({:.0}%)", agent.checklist_done, agent.checklist_total, pct),
-                        Style::default().fg(Color::Green),
+                lines.push(Line::from(vec![Span::styled(
+                    format!(
+                        "Progress: {}/{} ({:.0}%)",
+                        agent.checklist_done, agent.checklist_total, pct
                     ),
-                ]));
+                    Style::default().fg(Color::Green),
+                )]));
                 lines.push(Line::from(Span::raw("")));
             }
 
             if !agent.next_steps.is_empty() {
                 lines.push(Line::from(Span::styled(
                     "Next Steps:",
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
                 )));
                 for step in agent.next_steps.iter().take(8) {
                     let display = if step.len() > 45 {
@@ -1026,7 +1269,9 @@ impl TuiApp {
             if !agent.recent_decisions.is_empty() {
                 lines.push(Line::from(Span::styled(
                     "Decisions:",
-                    Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Blue)
+                        .add_modifier(Modifier::BOLD),
                 )));
                 for decision in agent.recent_decisions.iter().take(3) {
                     lines.push(Line::from(vec![
@@ -1042,19 +1287,16 @@ impl TuiApp {
                 .border_style(Style::default().fg(Color::Magenta));
 
             frame.render_widget(
-                Paragraph::new(Text::from(lines)).block(block).wrap(Wrap { trim: false }),
+                Paragraph::new(Text::from(lines))
+                    .block(block)
+                    .wrap(Wrap { trim: false }),
                 area,
             );
         }
     }
 
     fn render_search_overlay(&self, frame: &mut Frame, area: Rect) {
-        let overlay_area = Rect::new(
-            area.width / 4,
-            area.height / 3,
-            area.width / 2,
-            3,
-        );
+        let overlay_area = Rect::new(area.width / 4, area.height / 3, area.width / 2, 3);
 
         let block = Block::default()
             .title(" Search ")
@@ -1063,17 +1305,16 @@ impl TuiApp {
             .border_style(Style::default().fg(Color::Cyan))
             .style(Style::default().bg(Color::Black));
 
-        frame.render_widget(
-            Clear,
-            overlay_area,
-        );
+        frame.render_widget(Clear, overlay_area);
 
         frame.render_widget(
             Paragraph::new(Text::from(vec![Line::from(vec![
                 Span::raw("> "),
                 Span::styled(
                     &self.search,
-                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled("█", Style::default().fg(Color::Cyan)),
             ])]))
@@ -1091,7 +1332,12 @@ impl TuiApp {
         );
 
         let help_text = vec![
-            Line::from(Span::styled("Panoptic Help", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
+            Line::from(Span::styled(
+                "Panoptic Help",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )),
             Line::from(Span::raw("")),
             Line::from(Span::styled("Overview", Style::default().fg(Color::Yellow))),
             Line::from(Span::raw("  ↑/k, ↓/j    Navigate projects")),
@@ -1104,12 +1350,24 @@ impl TuiApp {
             Line::from(Span::raw("  q/Esc        Quit")),
             Line::from(Span::raw("  ?/h         Toggle help")),
             Line::from(Span::raw("")),
-            Line::from(Span::styled("Detail View", Style::default().fg(Color::Yellow))),
+            Line::from(Span::styled(
+                "Detail View",
+                Style::default().fg(Color::Yellow),
+            )),
             Line::from(Span::raw("  ↑/k, ↓/j    Previous/next project")),
             Line::from(Span::raw("  Esc/q        Back to overview")),
+            Line::from(Span::raw("  o            Open in editor")),
+            Line::from(Span::raw("  t            Open terminal")),
+            Line::from(Span::raw("  f            Open file manager")),
+            Line::from(Span::raw("  g            Open GitHub remote")),
             Line::from(Span::raw("")),
-            Line::from(Span::styled("Search Mode", Style::default().fg(Color::Yellow))),
-            Line::from(Span::raw("  Type to search project names, types, and phases")),
+            Line::from(Span::styled(
+                "Search Mode",
+                Style::default().fg(Color::Yellow),
+            )),
+            Line::from(Span::raw(
+                "  Type to search project names, types, and phases",
+            )),
             Line::from(Span::raw("  Enter/ESC    Close search")),
         ];
 

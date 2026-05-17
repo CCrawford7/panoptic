@@ -11,9 +11,7 @@ pub struct ScanRoot {
 
 impl ScanRoot {
     pub fn new(path: PathBuf) -> Self {
-        let label = path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string());
+        let label = path.file_name().map(|n| n.to_string_lossy().to_string());
         Self {
             path,
             label,

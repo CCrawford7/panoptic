@@ -184,6 +184,89 @@ function showDetail(index) {
         </div>
     ` : '';
 
+    // Dependencies section
+    const depsHtml = p.dependencies?.length ? `
+        <div class="detail-section">
+            <h3>Dependencies (${p.dependencies.length})</h3>
+            <div class="dep-grid">
+                ${p.dependencies.slice(0, 20).map(d => `
+                    <span class="dep-chip dep-${d.category}">
+                        <span class="dep-name">${escapeHtml(d.name)}</span>
+                        <span class="dep-version">${escapeHtml(d.version)}</span>
+                    </span>
+                `).join('')}
+                ${p.dependencies.length > 20 ? `<span class="dep-more">+${p.dependencies.length - 20} more</span>` : ''}
+            </div>
+        </div>
+    ` : '';
+
+    // Tags section (editable)
+    const tagsHtml = `
+        <div class="detail-section">
+            <h3>Tags</h3>
+            <div class="tags-container">
+                <div class="tags-list" id="detail-tags-list">
+                    ${(p.tags || []).map(t => `<span class="tag-chip">${escapeHtml(t)}</span>`).join('')}
+                    ${!(p.tags || []).length ? '<span class="value" style="color: var(--text-dim);">No tags</span>' : ''}
+                </div>
+                <div class="tag-input-row">
+                    <input type="text" id="detail-tag-input" placeholder="Add tag..." class="tag-input"
+                        onkeydown="if(event.key==='Enter')addDetailTag(${index})">
+                    <button class="action-btn-small" onclick="addDetailTag(${index})">+</button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // Note section (editable)
+    const notesHtml = `
+        <div class="detail-section">
+            <h3>Note</h3>
+            <textarea id="detail-note" class="note-textarea" rows="3"
+                placeholder="Add a note about this project...">${escapeHtml(p.note || '')}</textarea>
+            <button class="action-btn-small" onclick="saveDetailNote(${index})" style="margin-top:6px;">Save Note</button>
+        </div>
+    `;
+
+    // User status section
+    const statuses = ['', 'Planning', 'Active', 'Paused', 'Review', 'Complete', 'Abandoned', 'Archived'];
+    const statusHtml = `
+        <div class="detail-section">
+            <h3>Status</h3>
+            <div class="status-row">
+                <select id="detail-status" class="status-select" onchange="saveDetailStatus(${index})">
+                    ${statuses.map(s => `
+                        <option value="${s.toLowerCase()}" ${(p.user_status || '').toLowerCase() === s.toLowerCase() ? 'selected' : ''}>
+                            ${s || 'None'}
+                        </option>
+                    `).join('')}
+                </select>
+                <span id="detail-status-saved" class="save-indicator">✓</span>
+            </div>
+        </div>
+    `;
+
+    // Quick action buttons
+    const actionsHtml = `
+        <div class="detail-section">
+            <h3>Quick Actions</h3>
+            <div class="action-buttons">
+                <button class="action-btn" onclick="triggerAction(${index}, 'editor')">
+                    <span class="action-icon">✎</span> Editor
+                </button>
+                <button class="action-btn" onclick="triggerAction(${index}, 'terminal')">
+                    <span class="action-icon">⌨</span> Terminal
+                </button>
+                <button class="action-btn" onclick="triggerAction(${index}, 'file_manager')">
+                    <span class="action-icon">📁</span> Files
+                </button>
+                <button class="action-btn" onclick="triggerAction(${index}, 'github')" ${!git?.has_remote ? 'disabled' : ''}>
+                    <span class="action-icon">▲</span> GitHub
+                </button>
+            </div>
+        </div>
+    `;
+
     body.innerHTML = `
         <div class="detail-header">
             <h2>${escapeHtml(p.name)}</h2>
@@ -246,12 +329,17 @@ function showDetail(index) {
             </div>
         </div>
         ` : ''}
+        ${statusHtml}
+        ${tagsHtml}
+        ${notesHtml}
         ${phaseHtml}
         ${taskHtml}
         ${progressHtml}
+        ${depsHtml}
         ${nextStepsHtml}
         ${blockersHtml}
         ${decisionsHtml}
+        ${actionsHtml}
         ${!agent ? `
         <div class="detail-section">
             <h3>Agent Context</h3>
@@ -397,6 +485,109 @@ async function toggleRoot(index) {
         }
     } catch (err) {
         alert('Failed to toggle root: ' + err.message);
+    }
+}
+
+// ─── User Metadata API ─────────────────────────────────────
+
+async function addDetailTag(index) {
+    const p = filtered[index];
+    if (!p) return;
+    const input = document.getElementById('detail-tag-input');
+    const tag = input.value.trim();
+    if (!tag) return;
+
+    const tags = [...(p.tags || []), tag];
+    try {
+        const res = await fetch(`/api/projects/${projects.indexOf(p)}/tags`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tags })
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+            p.tags = tags;
+            input.value = '';
+            showDetail(currentDetailIndex);
+        }
+    } catch (err) {
+        console.error('Failed to save tag:', err);
+    }
+}
+
+async function saveDetailNote(index) {
+    const p = filtered[index];
+    if (!p) return;
+    const textarea = document.getElementById('detail-note');
+    const note = textarea.value.trim();
+
+    try {
+        const res = await fetch(`/api/projects/${projects.indexOf(p)}/note`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ note })
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+            p.note = note || null;
+            document.getElementById('detail-status-saved').style.opacity = '1';
+            setTimeout(() => {
+                document.getElementById('detail-status-saved').style.opacity = '0';
+            }, 1500);
+        }
+    } catch (err) {
+        console.error('Failed to save note:', err);
+    }
+}
+
+async function saveDetailStatus(index) {
+    const p = filtered[index];
+    if (!p) return;
+    const select = document.getElementById('detail-status');
+    const status = select.value;
+
+    try {
+        const res = await fetch(`/api/projects/${projects.indexOf(p)}/status`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status })
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+            p.user_status = status || null;
+            // Update activity if status changed it
+            if (status === 'complete') p.activity = 'Done';
+            if (status === 'archived') p.activity = 'Archived';
+            document.getElementById('detail-status-saved').style.opacity = '1';
+            setTimeout(() => {
+                document.getElementById('detail-status-saved').style.opacity = '0';
+            }, 1500);
+            // Re-render the grid to show updated activity
+            renderGrid();
+        }
+    } catch (err) {
+        console.error('Failed to save status:', err);
+    }
+}
+
+async function triggerAction(index, action) {
+    const p = filtered[index];
+    if (!p) return;
+
+    try {
+        const res = await fetch(`/api/projects/${projects.indexOf(p)}/action`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action })
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+            document.getElementById('status-bar').textContent = data.message || 'Action triggered';
+        } else {
+            document.getElementById('status-bar').textContent = 'Action failed: ' + (data.message || 'unknown');
+        }
+    } catch (err) {
+        document.getElementById('status-bar').textContent = 'Action failed: ' + err.message;
     }
 }
 

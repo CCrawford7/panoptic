@@ -2,6 +2,34 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// A dependency of a project
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Dependency {
+    pub name: String,
+    pub version: String,
+    pub category: DepCategory,
+}
+
+/// Category of a dependency
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DepCategory {
+    Runtime,
+    Dev,
+    Build,
+    Optional,
+}
+
+impl DepCategory {
+    pub fn label(&self) -> &'static str {
+        match self {
+            DepCategory::Runtime => "runtime",
+            DepCategory::Dev => "dev",
+            DepCategory::Build => "build",
+            DepCategory::Optional => "optional",
+        }
+    }
+}
+
 /// The type of a detected project
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProjectType {
@@ -39,10 +67,10 @@ impl ProjectType {
 /// Activity level of a project
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum ActivityLevel {
-    Active,  // modified within last 30 days
-    Stable,  // modified within last 90 days
-    Stale,   // modified > 90 days ago
-    Done,    // tagged as complete
+    Active, // modified within last 30 days
+    Stable, // modified within last 90 days
+    Stale,  // modified > 90 days ago
+    Done,   // tagged as complete
     Archived,
 }
 
@@ -124,20 +152,62 @@ pub enum ProjectTag {
     Custom(String),
 }
 
+/// User-set project status
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UserStatus {
+    Planning,
+    Active,
+    Paused,
+    Review,
+    Complete,
+    Abandoned,
+    Archived,
+}
+
+impl UserStatus {
+    pub fn label(&self) -> &'static str {
+        match self {
+            UserStatus::Planning => "Planning",
+            UserStatus::Active => "Active",
+            UserStatus::Paused => "Paused",
+            UserStatus::Review => "Review",
+            UserStatus::Complete => "Complete",
+            UserStatus::Abandoned => "Abandoned",
+            UserStatus::Archived => "Archived",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "planning" => Some(UserStatus::Planning),
+            "active" => Some(UserStatus::Active),
+            "paused" => Some(UserStatus::Paused),
+            "review" => Some(UserStatus::Review),
+            "complete" | "done" => Some(UserStatus::Complete),
+            "abandoned" => Some(UserStatus::Abandoned),
+            "archived" => Some(UserStatus::Archived),
+            _ => None,
+        }
+    }
+}
+
 /// A single detected project
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
     pub name: String,
     pub path: PathBuf,
     pub project_type: ProjectType,
-    pub size: u64,          // bytes
+    pub size: u64, // bytes
     pub file_count: u64,
     pub last_modified: DateTime<Utc>,
     pub created: Option<DateTime<Utc>>,
     pub is_git_repo: bool,
     pub git: Option<GitState>,
     pub agent: Option<AgentContext>,
+    pub dependencies: Vec<Dependency>,
     pub tags: Vec<String>,
+    pub note: Option<String>,
+    pub user_status: Option<UserStatus>,
     pub activity: ActivityLevel,
 }
 
@@ -237,7 +307,10 @@ mod tests {
             is_git_repo: false,
             git: None,
             agent: None,
+            dependencies: vec![],
             tags: vec![],
+            note: None,
+            user_status: None,
             activity: ActivityLevel::Active,
         };
 
@@ -261,7 +334,10 @@ mod tests {
             is_git_repo: false,
             git: None,
             agent: None,
+            dependencies: vec![],
             tags: vec![],
+            note: None,
+            user_status: None,
             activity: ActivityLevel::Active,
         };
 

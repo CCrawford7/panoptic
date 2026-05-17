@@ -1,6 +1,7 @@
 pub mod routes;
 
 use crate::config::Config;
+use crate::data::{merge_user_data, DataStore};
 use crate::project::Project;
 use crate::roots::{load_roots, save_roots, ScanRoot};
 use crate::scanner::scan_all_roots;
@@ -15,6 +16,7 @@ pub struct AppState {
     pub projects: Vec<Project>,
     pub config: Config,
     pub roots: Vec<ScanRoot>,
+    pub data_store: DataStore,
 }
 
 pub type SharedState = Arc<Mutex<AppState>>;
@@ -43,12 +45,18 @@ pub async fn start(scan_paths: Vec<PathBuf>, config: Config) -> Result<()> {
     // Persist any new roots
     let _ = save_roots(&roots);
 
+    // Load user metadata
+    let data_store = crate::data::load_data();
+
     // Scan all roots
     println!("🔍 Scanning {} root(s)...", roots.len());
     for r in &roots {
         println!("   📁 {} ({})", r.label_or_path(), r.path.display());
     }
-    let scan_result = scan_all_roots(&roots, &config)?;
+    let mut scan_result = scan_all_roots(&roots, &config)?;
+
+    // Merge user metadata into projects
+    merge_user_data(&mut scan_result.projects, &data_store);
 
     println!(
         "✅ Found {} projects in {}ms",
@@ -70,24 +78,53 @@ pub async fn start(scan_paths: Vec<PathBuf>, config: Config) -> Result<()> {
         projects: scan_result.projects,
         config: config.clone(),
         roots,
+        data_store,
     }));
 
     let app = Router::new()
         .route("/", axum::routing::get(routes::index))
         .route("/api/projects", axum::routing::get(routes::get_projects))
-        .route("/api/projects/:index", axum::routing::get(routes::get_project))
+        .route(
+            "/api/projects/:index",
+            axum::routing::get(routes::get_project),
+        )
         .route("/api/stats", axum::routing::get(routes::get_stats))
         .route("/api/refresh", axum::routing::post(routes::refresh))
         .route("/api/roots", axum::routing::get(routes::get_roots))
         .route("/api/roots", axum::routing::post(routes::add_root))
-        .route("/api/roots/:index", axum::routing::delete(routes::remove_root))
-        .route("/api/roots/:index", axum::routing::patch(routes::update_root))
+        .route(
+            "/api/roots/:index",
+            axum::routing::delete(routes::remove_root),
+        )
+        .route(
+            "/api/roots/:index",
+            axum::routing::patch(routes::update_root),
+        )
+        .route(
+            "/api/projects/:index/tags",
+            axum::routing::post(routes::update_tags),
+        )
+        .route(
+            "/api/projects/:index/note",
+            axum::routing::post(routes::update_note),
+        )
+        .route(
+            "/api/projects/:index/status",
+            axum::routing::post(routes::update_status),
+        )
+        .route(
+            "/api/projects/:index/action",
+            axum::routing::post(routes::project_action),
+        )
         .route("/static/*path", axum::routing::get(routes::static_files))
         .layer(CorsLayer::permissive())
         .with_state(state);
 
     let addr = format!("0.0.0.0:{}", config.web_port);
-    println!("🌐 Panoptic web dashboard: http://localhost:{}", config.web_port);
+    println!(
+        "🌐 Panoptic web dashboard: http://localhost:{}",
+        config.web_port
+    );
     println!("   API: http://localhost:{}/api/projects", config.web_port);
     println!("   Press Ctrl+C to stop");
 
