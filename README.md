@@ -51,8 +51,8 @@ panoptic --json    # Output project data as JSON for scripting
 ### Install
 
 ```bash
-# Via Cargo (requires Rust)
-cargo install panoptic
+# Via Cargo (from source — requires Rust)
+cargo install --git https://github.com/CCrawford7/panoptic
 
 # Or download a pre-built binary from GitHub Releases
 ```
