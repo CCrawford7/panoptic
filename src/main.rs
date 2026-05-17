@@ -4,14 +4,18 @@ use std::path::PathBuf;
 
 /// Panoptic - The all-seeing project dashboard for your dev folders.
 ///
-/// Scans a directory for projects and presents a beautiful birds-eye view
+/// Scans directories for projects and presents a beautiful birds-eye view
 /// with git status, agent context, and activity tracking.
+///
+/// You can specify one or more directories to scan. Multiple roots are
+/// persisted and merged into a single unified dashboard.
 #[derive(Parser, Debug)]
 #[command(name = "panoptic", version, about = "The all-seeing project dashboard")]
 struct Cli {
-    /// Directory to scan for projects (default: current directory)
+    /// Directories to scan for projects (default: current directory).
+    /// Multiple paths can be specified: panoptic ~/code ~/games
     #[arg(default_value = ".")]
-    path: PathBuf,
+    paths: Vec<PathBuf>,
 
     /// Start in web dashboard mode instead of TUI
     #[arg(long, short = 'w')]
@@ -63,15 +67,28 @@ async fn main() -> Result<()> {
         config.max_depth = cli.max_depth;
     }
 
-    let scan_path = if cli.path.is_absolute() {
-        cli.path.clone()
-    } else {
-        std::env::current_dir()?.join(&cli.path)
-    };
+    // Resolve all scan paths
+    let scan_paths: Vec<PathBuf> = cli
+        .paths
+        .iter()
+        .map(|p| {
+            if p.is_absolute() {
+                p.clone()
+            } else {
+                std::env::current_dir()
+                    .map(|cwd| cwd.join(p))
+                    .unwrap_or_else(|_| p.clone())
+            }
+        })
+        .collect();
 
-    // If --json, just scan and output
+    // If --json, scan and output
     if cli.json {
-        let result = panoptic::scanner::scan_directory(&scan_path, &config)?;
+        let roots: Vec<panoptic::roots::ScanRoot> = scan_paths
+            .iter()
+            .map(|p| panoptic::roots::ScanRoot::new(p.clone()))
+            .collect();
+        let result = panoptic::scanner::scan_all_roots(&roots, &config)?;
         println!("{}", serde_json::to_string_pretty(&serde_json::json!({
             "scan_duration_ms": result.scan_duration_ms,
             "project_count": result.projects.len(),
@@ -96,10 +113,13 @@ async fn main() -> Result<()> {
     }
 
     if cli.web {
-        // Web mode
-        panoptic::web::start(scan_path, config).await?;
+        // Web mode — supports multiple roots
+        panoptic::web::start(scan_paths, config).await?;
     } else {
-        // TUI mode
+        // TUI mode — use first path (or current dir)
+        let scan_path = scan_paths.into_iter().next().unwrap_or_else(|| {
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+        });
         let mut app = panoptic::tui::TuiApp::new(config);
         app.run(scan_path)?;
     }

@@ -2,6 +2,7 @@ use crate::config::Config;
 use crate::git::get_git_state;
 use crate::parser::parse_agent_files;
 use crate::project::{Project, ProjectType};
+use crate::roots::ScanRoot;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rayon::prelude::*;
@@ -215,6 +216,20 @@ pub fn scan_directory(path: &Path, config: &Config) -> Result<ScanResult> {
     candidates.sort();
     candidates.dedup();
 
+    // Filter out nested projects: if A is a project root and A/B is also one,
+    // keep only A (the top-most ancestor). This prevents listing sub-projects
+    // that are already contained within a parent project.
+    let top_level: Vec<PathBuf> = candidates
+        .iter()
+        .filter(|c| {
+            !candidates.iter().any(|other| {
+                other != *c && c.starts_with(other)
+            })
+        })
+        .cloned()
+        .collect();
+    candidates = top_level;
+
     // Scan projects in parallel
     let scanned_projects: Vec<Result<Option<Project>>> = candidates
         .par_iter()
@@ -226,6 +241,41 @@ pub fn scan_directory(path: &Path, config: &Config) -> Result<ScanResult> {
             Ok(Some(project)) => result.projects.push(project),
             Ok(None) => {}
             Err(e) => result.errors.push(format!("Error scanning: {}", e)),
+        }
+    }
+
+    // Sort by activity (active first), then by last modified
+    result.projects.sort_by(|a, b| {
+        b.activity
+            .cmp(&a.activity)
+            .then_with(|| b.last_modified.cmp(&a.last_modified))
+    });
+
+    result.scan_duration_ms = start.elapsed().as_millis() as u64;
+    Ok(result)
+}
+
+/// Scan multiple roots, merging results (deduplicating by resolved path)
+pub fn scan_all_roots(roots: &[ScanRoot], config: &Config) -> Result<ScanResult> {
+    let start = std::time::Instant::now();
+    let mut result = ScanResult::default();
+    let mut seen_paths: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+
+    for root in roots.iter().filter(|r| r.enabled) {
+        match scan_directory(&root.path, config) {
+            Ok(mut sub) => {
+                for project in sub.projects.drain(..) {
+                    if seen_paths.insert(project.path.clone()) {
+                        result.projects.push(project);
+                    }
+                }
+                result.errors.append(&mut sub.errors);
+            }
+            Err(e) => {
+                result
+                    .errors
+                    .push(format!("Error scanning {}: {}", root.path.display(), e));
+            }
         }
     }
 

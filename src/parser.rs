@@ -335,8 +335,8 @@ fn parse_agent_content(content: &str, context: &mut AgentContext) {
             let lower = line.to_lowercase();
             if lower.contains("phase") {
                 // Skip blank lines to find the phase description
-                for j in i + 1..lines.len() {
-                    let next = lines[j].trim();
+                for next in lines.iter().skip(i + 1) {
+                    let next = next.trim();
                     if next.is_empty() {
                         continue;
                     }
@@ -347,8 +347,8 @@ fn parse_agent_content(content: &str, context: &mut AgentContext) {
                 }
             }
             if lower.contains("task") || lower.contains("objective") || lower.contains("goal") {
-                for j in i + 1..lines.len() {
-                    let next = lines[j].trim();
+                for next in lines.iter().skip(i + 1) {
+                    let next = next.trim();
                     if next.is_empty() {
                         continue;
                     }
@@ -409,8 +409,8 @@ fn parse_agent_content(content: &str, context: &mut AgentContext) {
                 }
             } else {
                 // No colon content, check next non-blank line
-                for j in i + 1..lines.len() {
-                    let next = lines[j].trim();
+                for next in lines.iter().skip(i + 1) {
+                    let next = next.trim();
                     if next.is_empty() {
                         continue;
                     }

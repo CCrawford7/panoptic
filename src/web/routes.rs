@@ -212,21 +212,17 @@ pub async fn get_stats(State(state): State<SharedState>) -> Json<serde_json::Val
     }))
 }
 
-/// Rescan projects
+/// Rescan all roots
 pub async fn refresh(State(state): State<SharedState>) -> Json<serde_json::Value> {
     let mut state = state.lock().unwrap();
-    let scan_path = state.scan_path.clone();
+    let roots = state.roots.clone();
     let config = &state.config;
 
-    // Rescan
-    if let Ok(result) = crate::scanner::scan_directory(&scan_path, config) {
+    // Rescan all roots
+    if let Ok(result) = crate::scanner::scan_all_roots(&roots, config) {
         let count = result.projects.len();
         state.projects = result.projects;
-        state.projects.sort_by(|a, b| {
-            b.activity
-                .cmp(&a.activity)
-                .then_with(|| b.last_modified.cmp(&a.last_modified))
-        });
+        // Already sorted by scan_all_roots
 
         Json(serde_json::json!({
             "status": "ok",
@@ -238,4 +234,140 @@ pub async fn refresh(State(state): State<SharedState>) -> Json<serde_json::Value
             "projects_found": 0
         }))
     }
+}
+
+// ─── Scan Roots API ─────────────────────────────────────────
+
+/// List all scan roots
+pub async fn get_roots(State(state): State<SharedState>) -> Json<serde_json::Value> {
+    let state = state.lock().unwrap();
+    let roots: Vec<serde_json::Value> = state
+        .roots
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "path": r.path.to_string_lossy(),
+                "label": r.label_or_path(),
+                "enabled": r.enabled,
+            })
+        })
+        .collect();
+
+    Json(serde_json::json!({ "roots": roots }))
+}
+
+/// Add a new scan root
+pub async fn add_root(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let path_str = body.get("path").and_then(|v| v.as_str()).unwrap_or("");
+    if path_str.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "status": "error", "message": "path is required" })),
+        );
+    }
+
+    let path = std::path::PathBuf::from(path_str);
+    let resolved = if path.is_absolute() {
+        path
+    } else {
+        match std::env::current_dir() {
+            Ok(cwd) => cwd.join(&path),
+            Err(_) => path,
+        }
+    };
+
+    let mut state = state.lock().unwrap();
+    if state.roots.iter().any(|r| r.path == resolved) {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "status": "error",
+                "message": format!("Root already exists: {}", resolved.display())
+            })),
+        );
+    }
+
+    let root = crate::roots::ScanRoot::new(resolved);
+    state.roots.push(root);
+    let _ = crate::roots::save_roots(&state.roots);
+
+    // Rescan with new root
+    let roots = state.roots.clone();
+    let config = &state.config;
+    if let Ok(result) = crate::scanner::scan_all_roots(&roots, config) {
+        state.projects = result.projects;
+    }
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "status": "ok" })),
+    )
+}
+
+/// Remove a scan root
+pub async fn remove_root(
+    State(state): State<SharedState>,
+    Path(index): Path<usize>,
+) -> impl IntoResponse {
+    let mut state = state.lock().unwrap();
+    if index >= state.roots.len() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "status": "error", "message": "Invalid index" })),
+        );
+    }
+
+    state.roots.remove(index);
+    let _ = crate::roots::save_roots(&state.roots);
+
+    // Rescan without the removed root
+    let roots = state.roots.clone();
+    let config = &state.config;
+    if let Ok(result) = crate::scanner::scan_all_roots(&roots, config) {
+        state.projects = result.projects;
+    }
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "status": "ok" })),
+    )
+}
+
+/// Update a scan root (toggle enabled / update label)
+pub async fn update_root(
+    State(state): State<SharedState>,
+    Path(index): Path<usize>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let mut state = state.lock().unwrap();
+    if index >= state.roots.len() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "status": "error", "message": "Invalid index" })),
+        );
+    }
+
+    if let Some(enabled) = body.get("enabled").and_then(|v| v.as_bool()) {
+        state.roots[index].enabled = enabled;
+    }
+    if let Some(label) = body.get("label").and_then(|v| v.as_str()) {
+        state.roots[index].label = Some(label.to_string());
+    }
+
+    let _ = crate::roots::save_roots(&state.roots);
+
+    // Rescan
+    let roots = state.roots.clone();
+    let config = &state.config;
+    if let Ok(result) = crate::scanner::scan_all_roots(&roots, config) {
+        state.projects = result.projects;
+    }
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "status": "ok" })),
+    )
 }

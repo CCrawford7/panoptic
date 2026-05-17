@@ -40,6 +40,28 @@
 
         <div id="status-bar" class="status-bar"></div>
 
+        <!-- Roots Bar -->
+        <div id="roots-bar" class="roots-bar">
+            <span class="roots-label">📁 Roots:</span>
+            <span id="roots-list"></span>
+            <button class="roots-manage-btn" onclick="toggleRootsPanel()">+ Manage</button>
+        </div>
+
+        <!-- Roots Panel -->
+        <div id="roots-panel" class="roots-panel hidden">
+            <div class="roots-panel-header">
+                <h3>Scan Roots</h3>
+                <button class="modal-close" onclick="toggleRootsPanel()">×</button>
+            </div>
+            <div id="roots-panel-body">
+                <div class="loading">Loading...</div>
+            </div>
+            <div class="roots-panel-footer">
+                <input type="text" id="new-root-path" placeholder="Enter path to scan...">
+                <button onclick="addRoot()">Add Root</button>
+            </div>
+        </div>
+
         <main id="project-grid">
             <div class="loading">Scanning projects...</div>
         </main>

@@ -294,9 +294,121 @@ function escapeHtml(str) {
         .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
 }
 
+// ─── Scan Roots Management ────────────────────────────────
+
+async function loadRoots() {
+    try {
+        const res = await fetch('/api/roots');
+        const data = await res.json();
+        renderRoots(data.roots || []);
+    } catch (err) {
+        console.error('Failed to load roots:', err);
+    }
+}
+
+function renderRoots(roots) {
+    // Roots bar chips
+    const list = document.getElementById('roots-list');
+    list.innerHTML = roots.map(r =>
+        `<span class="root-chip">${escapeHtml(r.label)}</span>`
+    ).join('');
+
+    // Roots panel list
+    const body = document.getElementById('roots-panel-body');
+    if (roots.length === 0) {
+        body.innerHTML = '<div style="color: var(--text-dim); font-size: 13px; padding: 8px;">No scan roots configured. Add one below.</div>';
+        return;
+    }
+
+    body.innerHTML = roots.map((r, i) => `
+        <div class="root-item">
+            <span class="root-label">${escapeHtml(r.label)}</span>
+            <span class="root-path">${escapeHtml(r.path)}</span>
+            <button class="root-enabled ${r.enabled ? 'active' : ''}" onclick="toggleRoot(${i})">
+                ${r.enabled ? '● active' : '○ disabled'}
+            </button>
+            <button class="root-remove" onclick="removeRoot(${i})">✕</button>
+        </div>
+    `).join('');
+}
+
+function toggleRootsPanel() {
+    const panel = document.getElementById('roots-panel');
+    panel.classList.toggle('hidden');
+    if (!panel.classList.contains('hidden')) {
+        loadRoots();
+    }
+}
+
+async function addRoot() {
+    const input = document.getElementById('new-root-path');
+    const path = input.value.trim();
+    if (!path) return;
+
+    try {
+        const res = await fetch('/api/roots', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path })
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+            input.value = '';
+            await loadRoots();
+            await loadProjects();
+        } else {
+            alert('Error: ' + (data.message || 'unknown'));
+        }
+    } catch (err) {
+        alert('Failed to add root: ' + err.message);
+    }
+}
+
+async function removeRoot(index) {
+    try {
+        const res = await fetch(`/api/roots/${index}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (data.status === 'ok') {
+            await loadRoots();
+            await loadProjects();
+        }
+    } catch (err) {
+        alert('Failed to remove root: ' + err.message);
+    }
+}
+
+async function toggleRoot(index) {
+    // Fetch current state to toggle
+    try {
+        const rootsRes = await fetch('/api/roots');
+        const rootsData = await rootsRes.json();
+        const root = rootsData.roots[index];
+        if (!root) return;
+
+        const res = await fetch(`/api/roots/${index}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: !root.enabled })
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+            await loadRoots();
+            await loadProjects();
+        }
+    } catch (err) {
+        alert('Failed to toggle root: ' + err.message);
+    }
+}
+
 // Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') closeDetail();
+    if (e.key === 'Escape') {
+        closeDetail();
+        const panel = document.getElementById('roots-panel');
+        if (!panel.classList.contains('hidden')) {
+            panel.classList.add('hidden');
+        }
+    }
     if (e.key === '/' && !e.ctrlKey && !e.metaKey) {
         const search = document.getElementById('search');
         if (document.activeElement !== search) {
@@ -308,6 +420,7 @@ document.addEventListener('keydown', (e) => {
 
 // Load on startup
 loadProjects();
+loadRoots();
 
 // Auto-refresh every 60 seconds
 setInterval(loadProjects, 60000);
