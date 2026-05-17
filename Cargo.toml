@@ -1,0 +1,55 @@
+[package]
+name = "panoptic"
+version = "0.1.0"
+edition = "2021"
+description = "The all-seeing project dashboard for your development folders"
+authors = ["panoptic devs"]
+license = "MIT"
+repository = "https://github.com/panoptic-dev/panoptic"
+homepage = "https://github.com/panoptic-dev/panoptic"
+keywords = ["project-management", "dashboard", "tui", "developer-tools"]
+categories = ["command-line-utilities", "development-tools"]
+
+[dependencies]
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Core data
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+
+# Filesystem
+walkdir = "2"
+rayon = "1"
+
+# Git
+git2 = "0.19"
+
+# Async
+tokio = { version = "1", features = ["full"] }
+
+# TUI
+ratatui = "0.28"
+crossterm = "0.28"
+
+# Web
+axum = "0.7"
+tower-http = { version = "0.5", features = ["cors"] }
+rust-embed = "8"
+
+# Utilities
+anyhow = "1"
+colored = "2"
+open = "5"
+
+[[bin]]
+name = "panoptic"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 2
+strip = true
+lto = "fat"
+codegen-units = 1

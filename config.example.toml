@@ -1,0 +1,26 @@
+# Panoptic Configuration
+# Place at ~/.config/panoptic/config.toml or in the scanned directory
+
+# Directories to scan (default: current directory)
+# scan_dirs = ["."]
+
+# Maximum directory depth to scan for projects
+# max_depth = 3
+
+# Directory/file names to ignore
+# ignore_dirs = ["node_modules", "target", ".git", ".next", "__pycache__"]
+# ignore_files = [".DS_Store"]
+
+# Project activity thresholds (in days)
+# active_days = 30
+# stale_days = 90
+
+# Web server settings
+# web_port = 3173
+# web_open_browser = true
+
+# Show directories starting with "."
+# show_hidden = false
+
+# Maximum number of projects to display
+# max_projects = 200

@@ -1,0 +1,9 @@
+/target
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+*.pyc
+__pycache__/
+.env

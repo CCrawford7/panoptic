@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panoptic</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div id="app">
+        <header>
+            <div class="header-left">
+                <span class="logo">◉</span>
+                <h1>panoptic</h1>
+                <span class="subtitle" id="project-count">scanning...</span>
+            </div>
+            <div class="header-right">
+                <span class="stat-badge" id="stat-active">● 0 active</span>
+                <span class="stat-badge dirty" id="stat-dirty">● 0 dirty</span>
+                <span class="stat-badge" id="stat-git">● 0 git</span>
+                <span class="stat-badge context" id="stat-context">● 0 contexts</span>
+                <button class="refresh-btn" onclick="refresh()">↻ refresh</button>
+            </div>
+        </header>
+
+        <div class="toolbar">
+            <div class="filters">
+                <button class="filter-btn active" data-filter="all" onclick="setFilter('all')">All</button>
+                <button class="filter-btn" data-filter="active" onclick="setFilter('active')">Active</button>
+                <button class="filter-btn" data-filter="stable" onclick="setFilter('stable')">Stable</button>
+                <button class="filter-btn" data-filter="stale" onclick="setFilter('stale')">Stale</button>
+                <button class="filter-btn" data-filter="game" onclick="setFilter('game')">Game</button>
+                <button class="filter-btn" data-filter="tool" onclick="setFilter('tool')">Tool</button>
+                <button class="filter-btn" data-filter="web" onclick="setFilter('web')">Web</button>
+            </div>
+            <div class="search">
+                <input type="text" id="search" placeholder="Search projects..." oninput="onSearch()">
+            </div>
+        </div>
+
+        <div id="status-bar" class="status-bar"></div>
+
+        <main id="project-grid">
+            <div class="loading">Scanning projects...</div>
+        </main>
+
+        <!-- Detail Modal -->
+        <div id="detail-modal" class="modal hidden">
+            <div class="modal-backdrop" onclick="closeDetail()"></div>
+            <div class="modal-content" id="detail-content">
+                <button class="modal-close" onclick="closeDetail()">×</button>
+                <div id="detail-body"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
