@@ -18,6 +18,16 @@ panoptic --web ~/projects
 ### 🔍 Universal Project Discovery
 Auto-detects 10+ project types: Rust, TypeScript, JavaScript, Python, Godot, Go, Nix, Docker, Chrome Extensions, and more. Plugin-ready for custom detectors.
 
+### 📂 Multi-Root Scanning
+Scan multiple directories at once. Add, remove, or toggle scan roots at runtime via the web dashboard — no restart needed. Roots are persisted in `~/.config/panoptic/roots.toml` and survive across sessions.
+
+```bash
+# Scan multiple directories
+panoptic --web ~/projects ~/work ~/games
+
+# Roots persist — add more from the UI later
+```
+
 ### 🔄 Git Awareness at a Glance
 For every project, see branch, dirty status, staged/unstaged/untracked counts, ahead/behind remote, last commit message, total commits, and stash count.
 
@@ -37,8 +47,9 @@ Reads your `CLAUDE.md`, `AGENTS.md`, `brief.md`, `PLAN.md`, and other project ma
 
 **Web Dashboard** — SPA with:
 - Responsive card grid with live search and filtering
-- Click-through detail modal
-- REST API at `/api/projects`
+- Click-through detail modal with full git and agent context
+- REST API at `/api/projects`, `/api/stats`, `/api/roots`
+- **Multi-root management**: add, remove, enable/disable scan roots at runtime
 - Auto-refresh every 60 seconds
 
 ### 📊 Exportable
@@ -66,8 +77,14 @@ panoptic
 # Scan a specific directory
 panoptic ~/code
 
+# Scan multiple directories (merged into one dashboard)
+panoptic ~/projects ~/work ~/games
+
 # Web dashboard
 panoptic --web ~/projects
+
+# Web dashboard with multiple scan roots
+panoptic --web ~/projects ~/work
 
 # Custom port
 panoptic --web -p 8080 ~/projects
@@ -103,6 +120,8 @@ panoptic -c ~/.config/panoptic/config.toml ~/projects
 
 Panoptic looks for `panoptic.toml` in the scanned directory, or you can specify a path with `-c`.
 
+Scan roots are persisted globally in `~/.config/panoptic/roots.toml` and survive across restarts. You can manage roots from the web dashboard or by editing the file directly.
+
 ```toml
 # panoptic.toml
 max_depth = 3
@@ -114,11 +133,12 @@ ignore_dirs = ["node_modules", "target", ".git", ".next"]
 
 ## How It Works
 
-1. **Walk** — traverses directories up to `max_depth`, looking for project indicators (`.git`, `Cargo.toml`, `package.json`, etc.)
-2. **Detect** — identifies project type, calculates size, counts files
-3. **Git status** — opens each repo with libgit2, gathers full state
-4. **Parse** — reads CLAUDE.md/AGENTS.md/brief.md/PLAN.md for structured context
-5. **Present** — renders in TUI or web dashboard
+1. **Roots** — you specify one or more scan directories. These are persisted in `~/.config/panoptic/roots.toml` and can be managed at runtime from the web dashboard.
+2. **Walk** — traverses each root up to `max_depth`, looking for project indicators (`.git`, `Cargo.toml`, `package.json`, etc.). Sub-projects nested inside a parent project are collapsed.
+3. **Detect** — identifies project type, calculates size, counts files
+4. **Git status** — opens each repo with libgit2, gathers full state
+5. **Parse** — reads CLAUDE.md/AGENTS.md/brief.md/PLAN.md for structured context
+6. **Present** — renders in TUI or web dashboard
 
 ## Architecture
 
@@ -129,6 +149,7 @@ panoptic/
 │   ├── lib.rs       # Library root
 │   ├── config.rs    # Configuration
 │   ├── project.rs   # Data model
+│   ├── roots.rs     # Multi-root persistence & management
 │   ├── scanner.rs   # Project discovery & detection
 │   ├── git.rs       # Git state via libgit2
 │   ├── parser.rs    # Agent file parsing
@@ -151,15 +172,19 @@ panoptic/
 
 ## Roadmap
 
+- [x] Multi-root scanning with runtime management
+- [ ] Dependency parsing (Cargo.toml, package.json, pyproject.toml, go.mod)
+- [ ] Quick actions (open in editor/terminal/file manager/GitHub)
+- [ ] Tags, notes, and user-set project status
+- [ ] Context export for AI sessions (`panoptic export`)
 - [ ] File watching / live updates
 - [ ] Full-text search across all project docs (tantivy)
-- [ ] Context export for AI sessions (`panoptic export`)
-- [ ] Project scaffolding (`panoptic new <type> <name>`)
-- [ ] Tagging and categorization
+- [ ] Project health scoring
+- [ ] File composition breakdown (file types, LOC)
 - [ ] Activity heatmaps and commit frequency charts
+- [ ] Project scaffolding (`panoptic new <type> <name>`)
 - [ ] Plugin system for custom detectors/parsers
 - [ ] Homebrew and npm distribution
-- [ ] Plugin system
 
 ## License
 
